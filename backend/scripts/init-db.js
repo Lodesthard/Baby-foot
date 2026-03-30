@@ -1,0 +1,50 @@
+const fs = require('fs');
+const path = require('path');
+const bcrypt = require('bcryptjs');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+const mysql = require('mysql2/promise');
+const ensureSchema = require('../config/ensure-schema');
+
+async function initDB() {
+    const conn = await mysql.createConnection({
+        host: process.env.DB_HOST || 'localhost',
+        user: process.env.DB_USER || 'root',
+        password: process.env.DB_PASSWORD || '',
+        multipleStatements: true
+    });
+
+    console.log('Connexion a MySQL...');
+
+    // Lire et executer le schema
+    const schema = fs.readFileSync(path.join(__dirname, '..', '..', 'database', 'schema.sql'), 'utf8');
+    await conn.query(schema);
+    await conn.query('USE babyfoot_ranked');
+    await ensureSchema(conn);
+    console.log('Schema cree.');
+
+    // Creer l'admin par defaut
+    const hash = await bcrypt.hash('admin123', 10);
+    await conn.query(
+        `INSERT IGNORE INTO players (identifier, password_hash, display_name, is_admin)
+         VALUES ('admin', ?, 'Administrateur', 1)`,
+        [hash]
+    );
+    console.log('Admin cree (identifiant: admin, mot de passe: admin123)');
+
+    // Creer la premiere saison
+    await conn.query(
+        `INSERT INTO seasons (name, start_date, is_active, base_k_factor, rank_multiplier, score_multiplier, duo_rank_multiplier)
+         SELECT 'Saison 1', CURDATE(), 1, 32.00, 1.50, 0.10, 1.30
+         WHERE NOT EXISTS (SELECT 1 FROM seasons LIMIT 1)`
+    );
+    console.log('Saison 1 creee et activee.');
+
+    await conn.end();
+    console.log('Base de donnees initialisee avec succes !');
+}
+
+initDB().catch(err => {
+    console.error('Erreur:', err.message || err);
+    console.error(err);
+    process.exit(1);
+});
