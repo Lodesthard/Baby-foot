@@ -45,8 +45,8 @@ async function initDB() {
 
 	// Creer la premiere saison
 	await conn.query(
-		`INSERT INTO seasons (name, start_date, is_active, base_k_factor, rank_multiplier, score_multiplier, duo_rank_multiplier)
-         SELECT 'Saison 1', CURDATE(), 1, 32.00, 1.50, 0.10, 1.30
+		`INSERT INTO seasons (name, start_date, is_active, base_k_factor, rank_multiplier, score_multiplier, duo_rank_multiplier, loss_multiplier)
+         SELECT 'Saison 1', CURDATE(), 1, 32.00, 1.50, 0.10, 1.30, 1.00
          WHERE NOT EXISTS (SELECT 1 FROM seasons LIMIT 1)`,
 	);
 	console.log("Saison 1 creee et activee.");

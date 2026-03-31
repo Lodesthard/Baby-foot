@@ -61,7 +61,8 @@ router.post('/', authenticateToken, async (req, res) => {
                 base_k_factor: s.base_k_factor,
                 rank_multiplier: s.rank_multiplier,
                 score_multiplier: s.score_multiplier,
-                duo_rank_multiplier: s.duo_rank_multiplier
+                duo_rank_multiplier: s.duo_rank_multiplier,
+                loss_multiplier: s.loss_multiplier
             }
         );
 
@@ -86,7 +87,13 @@ router.post('/', authenticateToken, async (req, res) => {
                 ratings.t1_attack.elo_duo, ratings.t1_defense.elo_duo,
                 ratings.t2_attack.elo_duo, ratings.t2_defense.elo_duo,
                 score_team1, score_team2,
-                { base_k_factor: s.base_k_factor, rank_multiplier: s.rank_multiplier, score_multiplier: s.score_multiplier, duo_rank_multiplier: s.duo_rank_multiplier }
+                {
+                    base_k_factor: s.base_k_factor,
+                    rank_multiplier: s.rank_multiplier,
+                    score_multiplier: s.score_multiplier,
+                    duo_rank_multiplier: s.duo_rank_multiplier,
+                    loss_multiplier: s.loss_multiplier
+                }
             );
         }
 
@@ -197,7 +204,12 @@ router.post('/1v1', authenticateToken, async (req, res) => {
         const eloChanges = calculate1v1EloChange(
             r1.elo_1v1, r2.elo_1v1,
             score_player1, score_player2,
-            { base_k_factor: s.base_k_factor, rank_multiplier: s.rank_multiplier, score_multiplier: s.score_multiplier }
+            {
+                base_k_factor: s.base_k_factor,
+                rank_multiplier: s.rank_multiplier,
+                score_multiplier: s.score_multiplier,
+                loss_multiplier: s.loss_multiplier
+            }
         );
 
         // Pour 1v1, on utilise team1_attack = player1, team2_attack = player2, defense = meme joueur

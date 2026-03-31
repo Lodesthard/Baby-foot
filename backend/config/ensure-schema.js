@@ -8,6 +8,12 @@ async function ensureSchema(connOrPool) {
         );
     }
 
+    if (!seasonColumnNames.has('loss_multiplier')) {
+        await connOrPool.query(
+            'ALTER TABLE seasons ADD COLUMN loss_multiplier DECIMAL(4,2) DEFAULT 1.00 AFTER duo_rank_multiplier'
+        );
+    }
+
     // === 1v1 support ===
     const [prColumns] = await connOrPool.query('SHOW COLUMNS FROM player_ratings');
     const prColumnNames = new Set(prColumns.map((c) => c.Field));
