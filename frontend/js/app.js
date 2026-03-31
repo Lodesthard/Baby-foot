@@ -26,10 +26,83 @@ function formatEloChange(val) {
     return '<span>0</span>';
 }
 
+function formatWinrate(wins, losses) {
+    const total = wins + losses;
+    if (total === 0) return '-';
+    return Math.round((wins / total) * 100) + '%';
+}
+
+function getToastStack() {
+    let stack = document.getElementById('toast-stack');
+    if (!stack) {
+        stack = document.createElement('div');
+        stack.id = 'toast-stack';
+        stack.className = 'toast-stack';
+        document.body.appendChild(stack);
+    }
+    return stack;
+}
+
+function showToast(message, type = 'success') {
+    const stack = getToastStack();
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    stack.appendChild(toast);
+
+    requestAnimationFrame(() => toast.classList.add('show'));
+
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 240);
+    }, 2600);
+}
+
+function syncPlayerCaches(updatedPlayer) {
+    allPlayers = allPlayers.map((player) =>
+        player.id === updatedPlayer.id ? { ...player, display_name: updatedPlayer.display_name } : player
+    );
+
+    allDuos = allDuos.map((duo) => {
+        if (duo.player1_id === updatedPlayer.id) {
+            return { ...duo, player1_name: updatedPlayer.display_name };
+        }
+        if (duo.player2_id === updatedPlayer.id) {
+            return { ...duo, player2_name: updatedPlayer.display_name };
+        }
+        return duo;
+    });
+
+    Object.keys(selectedPlayers).forEach((key) => {
+        if (selectedPlayers[key]?.id === updatedPlayer.id) {
+            selectedPlayers[key] = { ...selectedPlayers[key], display_name: updatedPlayer.display_name };
+        }
+    });
+
+    Object.keys(selected1v1).forEach((key) => {
+        if (selected1v1[key]?.id === updatedPlayer.id) {
+            selected1v1[key] = { ...selected1v1[key], display_name: updatedPlayer.display_name };
+        }
+    });
+
+    Object.keys(selectedDuos).forEach((key) => {
+        const duo = selectedDuos[key];
+        if (!duo) return;
+        if (duo.player1_id === updatedPlayer.id) {
+            selectedDuos[key] = { ...duo, player1_name: updatedPlayer.display_name };
+            return;
+        }
+        if (duo.player2_id === updatedPlayer.id) {
+            selectedDuos[key] = { ...duo, player2_name: updatedPlayer.display_name };
+        }
+    });
+}
+
 function renderSeasonInfo(season) {
+    const lossPercent = Math.round(Number(season.loss_multiplier ?? 1) * 100);
     return `
-        <div class="season-info">K: ${season.base_k_factor} | Duel direct ATK/DEF: x${season.rank_multiplier} | Equipes / Duo: x${season.duo_rank_multiplier} | Score: x${season.score_multiplier}</div>
-        <div class="season-info season-info-secondary">Solo : duel direct + ecart cumule des equipes + score. Double : meme logique ATK/DEF + ELO duo selon l'ecart de rang des duos.</div>
+        <div class="season-info">K: ${season.base_k_factor} | Duel direct ATK/DEF: x${season.rank_multiplier} | Equipes / Duo: x${season.duo_rank_multiplier} | Score: x${season.score_multiplier} | Defaite: ${lossPercent}%</div>
+        <div class="season-info season-info-secondary">Solo : duel direct + ecart cumule des equipes + score. Double : meme logique ATK/DEF + ELO duo selon l'ecart de rang des duos. Le coeff defaite regle le pourcentage de points perdus.</div>
     `;
 }
 
@@ -40,6 +113,7 @@ function renderCoeffHelp() {
             <div><strong>Duel direct ATK/DEF</strong> : poids de l'ecart entre les deux joueurs directement opposes.</div>
             <div><strong>Score Mult</strong> : poids de l'ecart au score.</div>
             <div><strong>Equipes / Duo</strong> : poids de l'ecart cumule des equipes en ATK/DEF, et de l'ecart de rang entre les deux duos en double.</div>
+            <div><strong>Coeff defaite</strong> : pourcentage de points perdus par rapport a la perte normale. Exemple : 0.75 = 75% de la perte standard.</div>
         </div>
     `;
 }
@@ -51,6 +125,14 @@ function renderMatchEloHelp() {
                 <div class="rule-card-title">Regles ELO du double</div>
                 <div class="rule-card-text">ATK / DEF : duel direct + ecart cumule des deux equipes + score.</div>
                 <div class="rule-card-text">ELO duo : ecart de rang entre les deux duos + score.</div>
+            </div>
+        `;
+    }
+    if (matchMode === '1v1') {
+        return `
+            <div class="rule-card">
+                <div class="rule-card-title">Regles ELO du 1v1</div>
+                <div class="rule-card-text">L'ELO 1v1 depend du duel direct entre les deux joueurs et du score.</div>
             </div>
         `;
     }
@@ -78,11 +160,11 @@ function navigate(page) {
 
     currentPage = page;
 
-    // Charger les données de la page
     switch(page) {
         case 'home': loadHome(); break;
         case 'match': loadMatchPage(); break;
         case 'rankings': loadRankings(); break;
+        case 'history': loadHistory(); break;
         case 'profile': loadProfile(); break;
         case 'admin': loadAdmin(); break;
     }
@@ -101,7 +183,6 @@ function showApp() {
     const player = getPlayer();
     document.getElementById('header-user').textContent = player?.display_name || '';
 
-    // Afficher/cacher le bouton admin
     const adminBtn = document.querySelector('[data-page="admin"]');
     if (adminBtn) adminBtn.style.display = player?.is_admin ? '' : 'none';
 
@@ -141,7 +222,6 @@ async function handleRegister(e) {
             method: 'POST',
             body: JSON.stringify({ identifier, password, display_name })
         });
-        // Auto login
         const data = await api('/auth/login', {
             method: 'POST',
             body: JSON.stringify({ identifier, password })
@@ -188,26 +268,49 @@ async function loadHome() {
 
         if (stats?.ratings) {
             const r = stats.ratings;
-            html += `<div class="stats-grid">
+            html += `<div class="stats-grid stats-grid-4">
                 <div class="stat-box">
                     <div class="label">Attaque</div>
                     <div class="value rank-${getRankColorClass(getRankName(r.elo_attack))}">${r.elo_attack}</div>
                     <div class="rank-name rank-${getRankColorClass(getRankName(r.elo_attack))}">${getRankName(r.elo_attack)}</div>
                     <div class="ranking-record">${r.wins_attack}V ${r.losses_attack}D</div>
+                    <div class="winrate">WR: ${formatWinrate(r.wins_attack, r.losses_attack)}</div>
                 </div>
                 <div class="stat-box">
                     <div class="label">Defense</div>
                     <div class="value rank-${getRankColorClass(getRankName(r.elo_defense))}">${r.elo_defense}</div>
                     <div class="rank-name rank-${getRankColorClass(getRankName(r.elo_defense))}">${getRankName(r.elo_defense)}</div>
                     <div class="ranking-record">${r.wins_defense}V ${r.losses_defense}D</div>
+                    <div class="winrate">WR: ${formatWinrate(r.wins_defense, r.losses_defense)}</div>
                 </div>
                 <div class="stat-box">
                     <div class="label">Duo</div>
                     <div class="value rank-${getRankColorClass(getRankName(r.elo_duo))}">${r.elo_duo}</div>
                     <div class="rank-name rank-${getRankColorClass(getRankName(r.elo_duo))}">${getRankName(r.elo_duo)}</div>
                     <div class="ranking-record">${r.wins_duo}V ${r.losses_duo}D</div>
+                    <div class="winrate">WR: ${formatWinrate(r.wins_duo, r.losses_duo)}</div>
+                </div>
+                <div class="stat-box">
+                    <div class="label">1v1</div>
+                    <div class="value rank-${getRankColorClass(getRankName(r.elo_1v1))}">${r.elo_1v1}</div>
+                    <div class="rank-name rank-${getRankColorClass(getRankName(r.elo_1v1))}">${getRankName(r.elo_1v1)}</div>
+                    <div class="ranking-record">${r.wins_1v1}V ${r.losses_1v1}D</div>
+                    <div class="winrate">WR: ${formatWinrate(r.wins_1v1, r.losses_1v1)}</div>
                 </div>
             </div>`;
+
+            // Winrate global
+            const totalWins = r.wins_attack + r.wins_defense + r.wins_1v1;
+            const totalLosses = r.losses_attack + r.losses_defense + r.losses_1v1;
+            const totalGames = totalWins + totalLosses;
+            if (totalGames > 0) {
+                const wr = Math.round((totalWins / totalGames) * 100);
+                html += `<div class="winrate-banner">
+                    <span>Winrate global</span>
+                    <span class="${wr >= 50 ? 'elo-positive' : 'elo-negative'}">${wr}%</span>
+                    <span class="winrate-detail">${totalWins}V ${totalLosses}D (${totalGames} matchs)</span>
+                </div>`;
+            }
         }
 
         // Duo
@@ -231,30 +334,7 @@ async function loadHome() {
         } else {
             const playerId = player.id;
             for (const m of matches.slice(0, 10)) {
-                const isTeam1 = (m.team1_attack === playerId || m.team1_defense === playerId);
-                const won = isTeam1 ? m.score_team1 > m.score_team2 : m.score_team2 > m.score_team1;
-                let eloChange = 0;
-                if (m.team1_attack === playerId) eloChange = m.elo_change_t1_attack;
-                else if (m.team1_defense === playerId) eloChange = m.elo_change_t1_defense;
-                else if (m.team2_attack === playerId) eloChange = m.elo_change_t2_attack;
-                else if (m.team2_defense === playerId) eloChange = m.elo_change_t2_defense;
-
-                html += `<div class="match-card ${won ? 'win' : 'loss'}">
-                    <div class="match-header">
-                        <span class="match-type">${m.match_type === 'duo' ? 'Duo' : 'Solo'}</span>
-                        <span class="match-date">${formatDate(m.played_at)}</span>
-                    </div>
-                    <div class="match-teams">
-                        <div class="match-team">
-                            <div class="players">${m.t1_attack_name}<br><small style="color:var(--text-muted)">${m.t1_defense_name}</small></div>
-                        </div>
-                        <div class="match-score">${m.score_team1} - ${m.score_team2}</div>
-                        <div class="match-team">
-                            <div class="players">${m.t2_attack_name}<br><small style="color:var(--text-muted)">${m.t2_defense_name}</small></div>
-                        </div>
-                    </div>
-                    <div class="match-elo-change">${formatEloChange(eloChange)}</div>
-                </div>`;
+                html += renderMatchCard(m, playerId);
             }
         }
 
@@ -262,6 +342,60 @@ async function loadHome() {
     } catch (err) {
         container.innerHTML = `<div class="empty-state">${err.message}</div>`;
     }
+}
+
+function renderMatchCard(m, playerId) {
+    const is1v1 = m.match_type === '1v1';
+
+    if (is1v1) {
+        const isP1 = m.team1_attack === playerId;
+        const won = isP1 ? m.score_team1 > m.score_team2 : m.score_team2 > m.score_team1;
+        const eloChange = isP1 ? m.elo_change_1v1_t1 : m.elo_change_1v1_t2;
+
+        return `<div class="match-card ${playerId ? (won ? 'win' : 'loss') : ''}">
+            <div class="match-header">
+                <span class="match-type">1v1</span>
+                <span class="match-date">${formatDate(m.played_at)}</span>
+            </div>
+            <div class="match-teams">
+                <div class="match-team">
+                    <div class="players">${m.t1_attack_name}</div>
+                </div>
+                <div class="match-score">${m.score_team1} - ${m.score_team2}</div>
+                <div class="match-team">
+                    <div class="players">${m.t2_attack_name}</div>
+                </div>
+            </div>
+            ${playerId ? `<div class="match-elo-change">${formatEloChange(eloChange)}</div>` : ''}
+        </div>`;
+    }
+
+    const isTeam1 = (m.team1_attack === playerId || m.team1_defense === playerId);
+    const won = isTeam1 ? m.score_team1 > m.score_team2 : m.score_team2 > m.score_team1;
+    let eloChange = 0;
+    if (playerId) {
+        if (m.team1_attack === playerId) eloChange = m.elo_change_t1_attack;
+        else if (m.team1_defense === playerId) eloChange = m.elo_change_t1_defense;
+        else if (m.team2_attack === playerId) eloChange = m.elo_change_t2_attack;
+        else if (m.team2_defense === playerId) eloChange = m.elo_change_t2_defense;
+    }
+
+    return `<div class="match-card ${playerId ? (won ? 'win' : 'loss') : ''}">
+        <div class="match-header">
+            <span class="match-type">${m.match_type === 'duo' ? 'Duo' : 'Solo'}</span>
+            <span class="match-date">${formatDate(m.played_at)}</span>
+        </div>
+        <div class="match-teams">
+            <div class="match-team">
+                <div class="players">${m.t1_attack_name}<br><small style="color:var(--text-muted)">${m.t1_defense_name}</small></div>
+            </div>
+            <div class="match-score">${m.score_team1} - ${m.score_team2}</div>
+            <div class="match-team">
+                <div class="players">${m.t2_attack_name}<br><small style="color:var(--text-muted)">${m.t2_defense_name}</small></div>
+            </div>
+        </div>
+        ${playerId ? `<div class="match-elo-change">${formatEloChange(eloChange)}</div>` : ''}
+    </div>`;
 }
 
 // ===== Rank Helper =====
@@ -286,9 +420,11 @@ function getRankName(elo) {
 // ===== Match Recording =====
 let allPlayers = [];
 let allDuos = [];
-let matchMode = 'solo'; // 'solo' ou 'duo'
+let matchMode = 'solo'; // 'solo', 'duo', '1v1'
 let selectedPlayers = { 't1-attack': null, 't1-defense': null, 't2-attack': null, 't2-defense': null };
 let selectedDuos = { team1: null, team2: null };
+let selected1v1 = { player1: null, player2: null };
+let playerSearchesInitialized = false;
 
 async function loadMatchPage() {
     try {
@@ -311,7 +447,8 @@ function renderMatchForm() {
 
     container.innerHTML = `
         <div class="section-title">Enregistrer un match</div>
-        <div class="mode-toggle">
+        <div class="mode-toggle mode-toggle-3">
+            <button class="${matchMode === '1v1' ? 'active' : ''}" onclick="switchMatchMode('1v1')">1v1</button>
             <button class="${matchMode === 'solo' ? 'active' : ''}" onclick="switchMatchMode('solo')">Solo</button>
             <button class="${matchMode === 'duo' ? 'active' : ''}" onclick="switchMatchMode('duo')">Double</button>
         </div>
@@ -335,13 +472,30 @@ function switchMatchMode(mode) {
     matchMode = mode;
     selectedPlayers = { 't1-attack': null, 't1-defense': null, 't2-attack': null, 't2-defense': null };
     selectedDuos = { team1: null, team2: null };
+    selected1v1 = { player1: null, player2: null };
     renderMatchForm();
 }
 
 function renderTeamsContainer() {
     const container = document.getElementById('match-teams-container');
 
-    if (matchMode === 'solo') {
+    if (matchMode === '1v1') {
+        container.innerHTML = `
+            <div class="team-select">
+                <h3>Joueur 1</h3>
+                <div class="form-group">
+                    ${render1v1PlayerSearch('player1')}
+                </div>
+            </div>
+            <div class="team-select">
+                <h3>Joueur 2</h3>
+                <div class="form-group">
+                    ${render1v1PlayerSearch('player2')}
+                </div>
+            </div>
+        `;
+        initAllPlayerSearches();
+    } else if (matchMode === 'solo') {
         container.innerHTML = `
             <div class="team-select">
                 <h3>Equipe 1</h3>
@@ -401,8 +555,27 @@ function renderPlayerSearch(fieldId) {
     </div>`;
 }
 
+function render1v1PlayerSearch(fieldId) {
+    const selected = selected1v1[fieldId];
+    if (selected) {
+        return `<div class="selected-player">
+            ${selected.display_name}
+            <span class="remove-player" onclick="clear1v1Player('${fieldId}')">&times;</span>
+        </div>`;
+    }
+    return `<div class="player-search-wrapper">
+        <input type="text" class="player-search-input" id="search-${fieldId}"
+               placeholder="Rechercher un joueur..." autocomplete="off"
+               oninput="on1v1PlayerSearch('${fieldId}', this.value)"
+               onfocus="on1v1PlayerSearch('${fieldId}', this.value)">
+        <div class="player-search-results" id="results-${fieldId}"></div>
+    </div>`;
+}
+
 function initAllPlayerSearches() {
-    // Fermer les résultats quand on clique ailleurs
+    if (playerSearchesInitialized) return;
+    playerSearchesInitialized = true;
+
     document.addEventListener('click', (e) => {
         if (!e.target.closest('.player-search-wrapper')) {
             document.querySelectorAll('.player-search-results').forEach(el => el.classList.remove('open'));
@@ -430,6 +603,26 @@ function onPlayerSearch(fieldId, query) {
     resultsEl.classList.add('open');
 }
 
+function on1v1PlayerSearch(fieldId, query) {
+    const resultsEl = document.getElementById('results-' + fieldId);
+    if (!resultsEl) return;
+
+    const usedIds = Object.values(selected1v1).filter(p => p).map(p => p.id);
+    const q = query.toLowerCase().trim();
+    const filtered = allPlayers.filter(p =>
+        !usedIds.includes(p.id) && (q === '' || p.display_name.toLowerCase().includes(q))
+    );
+
+    if (filtered.length === 0) {
+        resultsEl.innerHTML = '<div class="player-search-option" style="color:var(--text-muted)">Aucun joueur</div>';
+    } else {
+        resultsEl.innerHTML = filtered.map(p =>
+            `<div class="player-search-option" onclick="select1v1Player('${fieldId}', ${p.id})">${p.display_name}</div>`
+        ).join('');
+    }
+    resultsEl.classList.add('open');
+}
+
 function selectPlayer(fieldId, playerId) {
     const player = allPlayers.find(p => p.id === playerId);
     if (!player) return;
@@ -439,6 +632,18 @@ function selectPlayer(fieldId, playerId) {
 
 function clearPlayerSearch(fieldId) {
     selectedPlayers[fieldId] = null;
+    renderTeamsContainer();
+}
+
+function select1v1Player(fieldId, playerId) {
+    const player = allPlayers.find(p => p.id === playerId);
+    if (!player) return;
+    selected1v1[fieldId] = player;
+    renderTeamsContainer();
+}
+
+function clear1v1Player(fieldId) {
+    selected1v1[fieldId] = null;
     renderTeamsContainer();
 }
 
@@ -463,7 +668,6 @@ function renderDuoSelect(teamKey) {
         return '<div class="empty-state" style="padding:16px">Aucun duo disponible</div>';
     }
 
-    // Search + list
     return `<input type="text" class="search-input" placeholder="Rechercher un duo..."
                 oninput="filterDuos('${teamKey}', this.value)">
             <div id="duo-list-${teamKey}">
@@ -506,7 +710,6 @@ function selectDuo(teamKey, duoId) {
     const duo = allDuos.find(d => d.id === duoId);
     if (!duo) return;
     selectedDuos[teamKey] = duo;
-    // Re-render both duo selects
     document.getElementById('duo-select-1').innerHTML = renderDuoSelect('team1');
     document.getElementById('duo-select-2').innerHTML = renderDuoSelect('team2');
 }
@@ -522,6 +725,40 @@ async function submitMatch(e) {
     const errEl = document.getElementById('match-error');
     errEl.textContent = '';
 
+    const score1 = parseInt(document.getElementById('score1').value);
+    const score2 = parseInt(document.getElementById('score2').value);
+
+    if (score1 === score2) {
+        errEl.textContent = 'Pas de match nul !';
+        return;
+    }
+
+    if (matchMode === '1v1') {
+        if (!selected1v1.player1 || !selected1v1.player2) {
+            errEl.textContent = 'Selectionnez les 2 joueurs';
+            return;
+        }
+        if (selected1v1.player1.id === selected1v1.player2.id) {
+            errEl.textContent = 'Les 2 joueurs doivent etre differents';
+            return;
+        }
+        try {
+            const result = await api('/matches/1v1', {
+                method: 'POST',
+                body: JSON.stringify({
+                    player1: selected1v1.player1.id,
+                    player2: selected1v1.player2.id,
+                    score_player1: score1,
+                    score_player2: score2,
+                })
+            });
+            show1v1EloResult(result);
+        } catch (err) {
+            errEl.textContent = err.message;
+        }
+        return;
+    }
+
     let data;
 
     if (matchMode === 'duo') {
@@ -534,8 +771,8 @@ async function submitMatch(e) {
             team1_defense: selectedDuos.team1.player2_id,
             team2_attack: selectedDuos.team2.player1_id,
             team2_defense: selectedDuos.team2.player2_id,
-            score_team1: parseInt(document.getElementById('score1').value),
-            score_team2: parseInt(document.getElementById('score2').value),
+            score_team1: score1,
+            score_team2: score2,
         };
     } else {
         const t1a = selectedPlayers['t1-attack'];
@@ -553,14 +790,9 @@ async function submitMatch(e) {
             team1_defense: t1d.id,
             team2_attack: t2a.id,
             team2_defense: t2d.id,
-            score_team1: parseInt(document.getElementById('score1').value),
-            score_team2: parseInt(document.getElementById('score2').value),
+            score_team1: score1,
+            score_team2: score2,
         };
-    }
-
-    if (data.score_team1 === data.score_team2) {
-        errEl.textContent = 'Pas de match nul !';
-        return;
     }
 
     const ids = [data.team1_attack, data.team1_defense, data.team2_attack, data.team2_defense];
@@ -578,6 +810,30 @@ async function submitMatch(e) {
     } catch (err) {
         errEl.textContent = err.message;
     }
+}
+
+function show1v1EloResult(result) {
+    const changes = result.elo_changes;
+    const getName = (field) => selected1v1[field]?.display_name || '?';
+
+    const overlay = document.createElement('div');
+    overlay.className = 'elo-result-overlay';
+    overlay.innerHTML = `
+        <div class="elo-result-box">
+            <h2>Match 1v1 enregistre !</h2>
+            <div class="section-title">Changements ELO 1v1</div>
+            <div class="elo-result-item">
+                <span>${getName('player1')}</span>
+                ${formatEloChange(changes.elo_change_1v1_t1)}
+            </div>
+            <div class="elo-result-item">
+                <span>${getName('player2')}</span>
+                ${formatEloChange(changes.elo_change_1v1_t2)}
+            </div>
+            <button class="btn" style="margin-top:16px" onclick="this.closest('.elo-result-overlay').remove()">OK</button>
+        </div>
+    `;
+    document.body.appendChild(overlay);
 }
 
 function showEloResult(result, matchData) {
@@ -641,6 +897,7 @@ function renderRankingTabs() {
         <button class="${rankingType === 'attack' ? 'active' : ''}" onclick="switchRanking('attack')">Attaque</button>
         <button class="${rankingType === 'defense' ? 'active' : ''}" onclick="switchRanking('defense')">Defense</button>
         <button class="${rankingType === 'duo' ? 'active' : ''}" onclick="switchRanking('duo')">Duo</button>
+        <button class="${rankingType === '1v1' ? 'active' : ''}" onclick="switchRanking('1v1')">1v1</button>
     `;
 }
 
@@ -695,6 +952,8 @@ function renderRankingList(data) {
     for (const r of data) {
         const colorClass = getRankColorClass(r.rank.name);
         const posClass = r.position <= 3 ? `top${r.position}` : '';
+        const total = r.wins + r.losses;
+        const wr = total > 0 ? Math.round((r.wins / total) * 100) + '%' : '-';
         let name;
         if (rankingType === 'duo') {
             name = r.duo_name
@@ -708,7 +967,7 @@ function renderRankingList(data) {
             <div class="ranking-pos ${posClass}">#${r.position}</div>
             <div class="ranking-info">
                 <div class="ranking-name">${name}</div>
-                <div class="ranking-record">${r.wins}V ${r.losses}D</div>
+                <div class="ranking-record">${r.wins}V ${r.losses}D | WR: ${wr}</div>
             </div>
             <div class="ranking-elo">
                 <div class="elo-value rank-${colorClass}">${r.elo}</div>
@@ -719,18 +978,74 @@ function renderRankingList(data) {
     container.innerHTML = html;
 }
 
+// ===== History (all matches) =====
+let historyPage = 1;
+
+async function loadHistory(page) {
+    historyPage = page || 1;
+    const container = document.getElementById('history-content');
+    container.innerHTML = '<div class="loading">Chargement...</div>';
+
+    try {
+        const data = await api(`/matches/history?page=${historyPage}`);
+        const player = getPlayer();
+
+        let html = `<div class="section-title">Historique des matchs (${data.total} total)</div>`;
+
+        if (data.matches.length === 0) {
+            html += '<div class="empty-state">Aucun match joue</div>';
+        } else {
+            for (const m of data.matches) {
+                html += renderMatchCard(m, player.id);
+            }
+        }
+
+        // Pagination
+        if (data.totalPages > 1) {
+            html += '<div class="pagination">';
+            if (historyPage > 1) {
+                html += `<button class="btn btn-small btn-secondary" onclick="loadHistory(${historyPage - 1})">Precedent</button>`;
+            }
+            html += `<span class="pagination-info">Page ${data.page} / ${data.totalPages}</span>`;
+            if (historyPage < data.totalPages) {
+                html += `<button class="btn btn-small btn-secondary" onclick="loadHistory(${historyPage + 1})">Suivant</button>`;
+            }
+            html += '</div>';
+        }
+
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = `<div class="empty-state">${err.message}</div>`;
+    }
+}
+
 // ===== Profile =====
 async function loadProfile() {
     const container = document.getElementById('profile-content');
     try {
         const player = getPlayer();
-        const duo = await api('/duos/mine');
-        const players = await api('/players');
+        const [duo, players, me] = await Promise.all([
+            api('/duos/mine'),
+            api('/players'),
+            api('/auth/me')
+        ]);
+
+        // Refresh player data from server
+        setPlayer(me);
+        document.getElementById('header-user').textContent = me.display_name;
 
         let html = `<div class="card">
             <div class="card-title">Mon profil</div>
-            <div style="font-size:18px;font-weight:700;margin-bottom:4px">${player.display_name}</div>
-            <div style="font-size:13px;color:var(--text-muted)">ID: ${player.id}</div>
+            <div style="font-size:18px;font-weight:700;margin-bottom:4px">${me.display_name}</div>
+            <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px">ID: ${me.id}</div>
+            <form onsubmit="changeDisplayName(event)" style="display:flex;gap:8px;align-items:flex-end">
+                <div class="form-group" style="flex:1;margin-bottom:0">
+                    <label>Changer de pseudo</label>
+                    <input type="text" id="new-display-name" placeholder="Nouveau pseudo" value="${me.display_name}" maxlength="30">
+                </div>
+                <button type="submit" class="btn btn-small" style="height:40px">OK</button>
+            </form>
+            <div id="name-msg" class="success-msg" style="margin-top:8px"></div>
         </div>`;
 
         // Duo
@@ -741,7 +1056,7 @@ async function loadProfile() {
                 <div class="duo-warning">Le duo ne peut pas etre change pendant la saison</div>
             </div>`;
         } else {
-            const available = players.filter(p => p.id !== player.id);
+            const available = players.filter(p => p.id !== me.id);
             html += `<form onsubmit="createDuo(event)">
                 <div class="form-group">
                     <label>Nom du duo</label>
@@ -763,6 +1078,30 @@ async function loadProfile() {
         container.innerHTML = html;
     } catch (err) {
         container.innerHTML = `<div class="empty-state">${err.message}</div>`;
+    }
+}
+
+async function changeDisplayName(e) {
+    e.preventDefault();
+    const nameEl = document.getElementById('new-display-name');
+    const msgEl = document.getElementById('name-msg');
+    msgEl.textContent = '';
+    msgEl.className = 'success-msg';
+
+    try {
+        const result = await api('/auth/display-name', {
+            method: 'PUT',
+            body: JSON.stringify({ display_name: nameEl.value.trim() })
+        });
+
+        setPlayer(result.player);
+        syncPlayerCaches(result.player);
+        document.getElementById('header-user').textContent = result.player.display_name;
+        showToast('Pseudo mis a jour');
+        await loadProfile();
+    } catch (err) {
+        msgEl.className = 'error-msg';
+        msgEl.textContent = err.message;
     }
 }
 
@@ -794,10 +1133,12 @@ async function loadAdmin() {
     }
 
     try {
-        const [stats, seasons, players] = await Promise.all([
+        const [stats, seasons, players, adminMatches, adminDuos] = await Promise.all([
             api('/admin/stats'),
             api('/seasons'),
-            api('/admin/players')
+            api('/admin/players'),
+            api('/admin/matches'),
+            api('/admin/duos')
         ]);
 
         let html = '';
@@ -821,16 +1162,18 @@ async function loadAdmin() {
                 <div class="form-group"><label>Duel direct ATK/DEF</label><input id="new-rank" type="number" step="0.01" value="1.5"></div>
                 <div class="form-group"><label>Score Mult</label><input id="new-score" type="number" step="0.01" value="0.1"></div>
                 <div class="form-group"><label>Equipes / Duo</label><input id="new-duo-rank" type="number" step="0.01" value="1.3"></div>
+                <div class="form-group"><label>Coeff defaite</label><input id="new-loss" type="number" step="0.01" min="0" value="1"></div>
             </div>
             ${renderCoeffHelp()}
             <button type="submit" class="btn btn-small">Creer la saison</button>
         </form>`;
 
         for (const s of seasons) {
+            const lossPercent = Math.round(Number(s.loss_multiplier ?? 1) * 100);
             html += `<div class="card" style="display:flex;justify-content:space-between;align-items:center">
                 <div>
                     <strong>${s.name}</strong> ${s.is_active ? '<span class="admin-badge">Active</span>' : ''}
-                    <div style="font-size:11px;color:var(--text-muted)">K:${s.base_k_factor} | Duel:${s.rank_multiplier} | Score:${s.score_multiplier} | Equipes/Duo:${s.duo_rank_multiplier}</div>
+                    <div style="font-size:11px;color:var(--text-muted)">K:${s.base_k_factor} | Duel:${s.rank_multiplier} | Score:${s.score_multiplier} | Equipes/Duo:${s.duo_rank_multiplier} | Defaite:${lossPercent}%</div>
                 </div>
                 <div>
                     ${!s.is_active ? `<button class="btn btn-small" onclick="activateSeason(${s.id})">Activer</button>` : ''}
@@ -851,6 +1194,7 @@ async function loadAdmin() {
                         <div class="form-group"><label>Duel direct ATK/DEF</label><input id="edit-rank" type="number" step="0.01" value="${as.rank_multiplier}"></div>
                         <div class="form-group"><label>Score Mult</label><input id="edit-score" type="number" step="0.01" value="${as.score_multiplier}"></div>
                         <div class="form-group"><label>Equipes / Duo</label><input id="edit-duo-rank" type="number" step="0.01" value="${as.duo_rank_multiplier}"></div>
+                        <div class="form-group"><label>Coeff defaite</label><input id="edit-loss" type="number" step="0.01" min="0" value="${as.loss_multiplier ?? 1}"></div>
                     </div>
                     ${renderCoeffHelp()}
                     <button type="submit" class="btn btn-small">Sauvegarder</button>
@@ -858,7 +1202,29 @@ async function loadAdmin() {
             </div>`;
         }
 
-        // Joueurs
+        // Gestion matchs (annulation)
+        html += `<div class="admin-section"><h2>Matchs recents</h2>`;
+        for (const m of adminMatches.slice(0, 30)) {
+            const is1v1 = m.match_type === '1v1';
+            const cancelled = m.is_cancelled;
+            html += `<div class="match-admin-item ${cancelled ? 'cancelled' : ''}">
+                <div>
+                    <span class="match-type">${m.match_type.toUpperCase()}</span>
+                    <span class="match-date">${formatDate(m.played_at)}</span>
+                    ${cancelled ? '<span class="admin-badge" style="background:rgba(255,70,85,0.2);color:var(--red)">Annule</span>' : ''}
+                </div>
+                <div style="font-size:13px;margin-top:4px">
+                    ${is1v1
+                        ? `${m.t1_attack_name} ${m.score_team1} - ${m.score_team2} ${m.t2_attack_name}`
+                        : `${m.t1_attack_name} & ${m.t1_defense_name} ${m.score_team1} - ${m.score_team2} ${m.t2_attack_name} & ${m.t2_defense_name}`
+                    }
+                </div>
+                ${!cancelled ? `<button class="btn btn-small btn-danger" style="margin-top:6px" onclick="cancelMatch(${m.id})">Annuler ce match</button>` : ''}
+            </div>`;
+        }
+        html += `</div>`;
+
+        // Joueurs (avec modification ELO et suppression)
         html += `<div class="admin-section"><h2>Joueurs</h2>`;
         for (const p of players) {
             html += `<div class="player-list-item">
@@ -867,13 +1233,32 @@ async function loadAdmin() {
                     ${p.is_admin ? '<span class="admin-badge">Admin</span>' : ''}
                     <div class="id-badge">${p.identifier}</div>
                 </div>
-                <div style="display:flex;gap:4px">
+                <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">
                     <button class="btn btn-small btn-secondary" onclick="toggleAdmin(${p.id}, ${p.is_admin ? 0 : 1})">${p.is_admin ? 'Retirer admin' : 'Promouvoir'}</button>
                     <button class="btn btn-small btn-secondary" onclick="resetPassword(${p.id})">Reset MDP</button>
+                    <button class="btn btn-small" onclick="showEditElo(${p.id}, '${p.display_name.replace(/'/g, "\\'")}')">Modifier ELO</button>
+                    <button class="btn btn-small btn-danger" onclick="deletePlayer(${p.id}, '${p.display_name.replace(/'/g, "\\'")}')">Supprimer</button>
                 </div>
             </div>`;
         }
         html += `</div>`;
+
+        // Duos (avec suppression)
+        html += `<div class="admin-section"><h2>Duos</h2>`;
+        for (const d of adminDuos) {
+            html += `<div class="player-list-item">
+                <div>
+                    ${d.duo_name ? `<span class="name" style="color:var(--gold)">${d.duo_name}</span> - ` : ''}
+                    <span class="name">${d.player1_name} & ${d.player2_name}</span>
+                </div>
+                <button class="btn btn-small btn-danger" onclick="deleteDuo(${d.id})">Supprimer</button>
+            </div>`;
+        }
+        if (adminDuos.length === 0) {
+            html += '<div class="empty-state" style="padding:12px">Aucun duo</div>';
+        }
+        html += `</div>`;
+
         html += `<div id="admin-msg" class="success-msg"></div>`;
 
         container.innerHTML = html;
@@ -892,10 +1277,12 @@ async function createSeason(e) {
                 base_k_factor: parseFloat(document.getElementById('new-k').value),
                 rank_multiplier: parseFloat(document.getElementById('new-rank').value),
                 score_multiplier: parseFloat(document.getElementById('new-score').value),
-                duo_rank_multiplier: parseFloat(document.getElementById('new-duo-rank').value)
+                duo_rank_multiplier: parseFloat(document.getElementById('new-duo-rank').value),
+                loss_multiplier: parseFloat(document.getElementById('new-loss').value)
             })
         });
-        loadAdmin();
+        await loadAdmin();
+        showToast('Saison creee');
     } catch (err) {
         alert(err.message);
     }
@@ -904,7 +1291,8 @@ async function createSeason(e) {
 async function activateSeason(id) {
     try {
         await api(`/seasons/${id}/activate`, { method: 'PUT' });
-        loadAdmin();
+        await loadAdmin();
+        showToast('Saison activee');
     } catch (err) { alert(err.message); }
 }
 
@@ -912,7 +1300,8 @@ async function endSeason(id) {
     if (!confirm('Terminer cette saison ?')) return;
     try {
         await api(`/seasons/${id}/end`, { method: 'PUT' });
-        loadAdmin();
+        await loadAdmin();
+        showToast('Saison terminee');
     } catch (err) { alert(err.message); }
 }
 
@@ -926,11 +1315,12 @@ async function updateCoeffs(e, id) {
                 base_k_factor: parseFloat(document.getElementById('edit-k').value),
                 rank_multiplier: parseFloat(document.getElementById('edit-rank').value),
                 score_multiplier: parseFloat(document.getElementById('edit-score').value),
-                duo_rank_multiplier: parseFloat(document.getElementById('edit-duo-rank').value)
+                duo_rank_multiplier: parseFloat(document.getElementById('edit-duo-rank').value),
+                loss_multiplier: parseFloat(document.getElementById('edit-loss').value)
             })
         });
-        document.getElementById('admin-msg').textContent = 'Coefficients mis a jour';
-        setTimeout(() => { const el = document.getElementById('admin-msg'); if(el) el.textContent = ''; }, 2000);
+        await loadAdmin();
+        showToast('Coefficients de saison mis a jour');
     } catch (err) { alert(err.message); }
 }
 
@@ -947,6 +1337,95 @@ async function resetPassword(id) {
     try {
         await api(`/admin/players/${id}/reset-password`, { method: 'PUT', body: JSON.stringify({ new_password: newPass }) });
         alert('Mot de passe reinitialise');
+    } catch (err) { alert(err.message); }
+}
+
+async function cancelMatch(matchId) {
+    if (!confirm('Annuler ce match ? Les changements ELO seront inverses.')) return;
+    try {
+        await api(`/admin/matches/${matchId}/cancel`, { method: 'PUT' });
+        loadAdmin();
+    } catch (err) { alert(err.message); }
+}
+
+function showEditElo(playerId, playerName) {
+    const overlay = document.createElement('div');
+    overlay.className = 'elo-result-overlay';
+    overlay.innerHTML = `
+        <div class="elo-result-box">
+            <h2>Modifier ELO</h2>
+            <div style="font-size:14px;color:var(--text-secondary);margin-bottom:12px">${playerName}</div>
+            <form onsubmit="submitEditElo(event, ${playerId})">
+                <div class="form-group">
+                    <label>ELO Attaque</label>
+                    <input type="number" id="edit-elo-attack" placeholder="Laisser vide pour ne pas modifier">
+                </div>
+                <div class="form-group">
+                    <label>ELO Defense</label>
+                    <input type="number" id="edit-elo-defense" placeholder="Laisser vide pour ne pas modifier">
+                </div>
+                <div class="form-group">
+                    <label>ELO Duo</label>
+                    <input type="number" id="edit-elo-duo" placeholder="Laisser vide pour ne pas modifier">
+                </div>
+                <div class="form-group">
+                    <label>ELO 1v1</label>
+                    <input type="number" id="edit-elo-1v1" placeholder="Laisser vide pour ne pas modifier">
+                </div>
+                <div id="edit-elo-error" class="error-msg"></div>
+                <div style="display:flex;gap:8px;margin-top:12px">
+                    <button type="submit" class="btn">Sauvegarder</button>
+                    <button type="button" class="btn btn-secondary" onclick="this.closest('.elo-result-overlay').remove()">Annuler</button>
+                </div>
+            </form>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+}
+
+async function submitEditElo(e, playerId) {
+    e.preventDefault();
+    const data = {};
+    const attack = document.getElementById('edit-elo-attack').value;
+    const defense = document.getElementById('edit-elo-defense').value;
+    const duo = document.getElementById('edit-elo-duo').value;
+    const elo1v1 = document.getElementById('edit-elo-1v1').value;
+
+    if (attack !== '') data.elo_attack = parseInt(attack);
+    if (defense !== '') data.elo_defense = parseInt(defense);
+    if (duo !== '') data.elo_duo = parseInt(duo);
+    if (elo1v1 !== '') data.elo_1v1 = parseInt(elo1v1);
+
+    if (Object.keys(data).length === 0) {
+        document.getElementById('edit-elo-error').textContent = 'Entrez au moins une valeur';
+        return;
+    }
+
+    try {
+        await api(`/admin/players/${playerId}/elo`, {
+            method: 'PUT',
+            body: JSON.stringify(data)
+        });
+        document.querySelector('.elo-result-overlay')?.remove();
+        loadAdmin();
+    } catch (err) {
+        document.getElementById('edit-elo-error').textContent = err.message;
+    }
+}
+
+async function deletePlayer(playerId, playerName) {
+    if (!confirm(`Supprimer le compte de "${playerName}" ? Cette action est irreversible.`)) return;
+    try {
+        await api(`/admin/players/${playerId}`, { method: 'DELETE' });
+        loadAdmin();
+    } catch (err) { alert(err.message); }
+}
+
+async function deleteDuo(duoId) {
+    if (!confirm('Supprimer ce duo ?')) return;
+    try {
+        await api(`/admin/duos/${duoId}`, { method: 'DELETE' });
+        loadAdmin();
     } catch (err) { alert(err.message); }
 }
 

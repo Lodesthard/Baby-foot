@@ -27,12 +27,12 @@ router.get('/', authenticateToken, async (req, res) => {
 // Créer une saison (admin)
 router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     try {
-        const { name, base_k_factor, rank_multiplier, score_multiplier, duo_rank_multiplier } = req.body;
+        const { name, base_k_factor, rank_multiplier, score_multiplier, duo_rank_multiplier, loss_multiplier } = req.body;
         if (!name) return res.status(400).json({ error: 'Nom requis' });
 
         const [result] = await pool.query(
-            'INSERT INTO seasons (name, start_date, base_k_factor, rank_multiplier, score_multiplier, duo_rank_multiplier) VALUES (?, CURDATE(), ?, ?, ?, ?)',
-            [name, base_k_factor || 32, rank_multiplier || 1.5, score_multiplier || 0.1, duo_rank_multiplier || 1.3]
+            'INSERT INTO seasons (name, start_date, base_k_factor, rank_multiplier, score_multiplier, duo_rank_multiplier, loss_multiplier) VALUES (?, CURDATE(), ?, ?, ?, ?, ?)',
+            [name, base_k_factor ?? 32, rank_multiplier ?? 1.5, score_multiplier ?? 0.1, duo_rank_multiplier ?? 1.3, loss_multiplier ?? 1]
         );
 
         res.status(201).json({ message: 'Saison créée', id: result.insertId });
@@ -66,10 +66,10 @@ router.put('/:id/activate', authenticateToken, requireAdmin, async (req, res) =>
 // Modifier les coefficients (admin)
 router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
     try {
-        const { base_k_factor, rank_multiplier, score_multiplier, duo_rank_multiplier, name } = req.body;
+        const { base_k_factor, rank_multiplier, score_multiplier, duo_rank_multiplier, loss_multiplier, name } = req.body;
         await pool.query(
-            'UPDATE seasons SET base_k_factor = ?, rank_multiplier = ?, score_multiplier = ?, duo_rank_multiplier = ?, name = ? WHERE id = ?',
-            [base_k_factor, rank_multiplier, score_multiplier, duo_rank_multiplier, name, req.params.id]
+            'UPDATE seasons SET base_k_factor = ?, rank_multiplier = ?, score_multiplier = ?, duo_rank_multiplier = ?, loss_multiplier = ?, name = ? WHERE id = ?',
+            [base_k_factor, rank_multiplier, score_multiplier, duo_rank_multiplier, loss_multiplier, name, req.params.id]
         );
         res.json({ message: 'Saison mise à jour' });
     } catch (err) {

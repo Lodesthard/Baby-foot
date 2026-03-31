@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS seasons (
     rank_multiplier DECIMAL(4,2) DEFAULT 1.50,
     score_multiplier DECIMAL(4,2) DEFAULT 0.10,
     duo_rank_multiplier DECIMAL(4,2) DEFAULT 1.30,
+    loss_multiplier DECIMAL(4,2) DEFAULT 1.00,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -43,12 +44,15 @@ CREATE TABLE IF NOT EXISTS player_ratings (
     elo_attack INT DEFAULT 1200,
     elo_defense INT DEFAULT 1200,
     elo_duo INT DEFAULT 1200,
+    elo_1v1 INT DEFAULT 1200,
     wins_attack INT DEFAULT 0,
     losses_attack INT DEFAULT 0,
     wins_defense INT DEFAULT 0,
     losses_defense INT DEFAULT 0,
     wins_duo INT DEFAULT 0,
     losses_duo INT DEFAULT 0,
+    wins_1v1 INT DEFAULT 0,
+    losses_1v1 INT DEFAULT 0,
     UNIQUE KEY unique_player_season (player_id, season_id),
     FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE,
     FOREIGN KEY (season_id) REFERENCES seasons(id) ON DELETE CASCADE
@@ -77,7 +81,7 @@ CREATE TABLE IF NOT EXISTS duos (
 CREATE TABLE IF NOT EXISTS matches (
     id INT AUTO_INCREMENT PRIMARY KEY,
     season_id INT NOT NULL,
-    match_type ENUM('solo', 'duo') NOT NULL,
+    match_type ENUM('solo', 'duo', '1v1') NOT NULL,
     -- Equipe 1
     team1_attack INT NOT NULL,
     team1_defense INT NOT NULL,
@@ -93,7 +97,10 @@ CREATE TABLE IF NOT EXISTS matches (
     elo_change_t2_defense INT DEFAULT 0,
     elo_change_duo_t1 INT DEFAULT 0,
     elo_change_duo_t2 INT DEFAULT 0,
+    elo_change_1v1_t1 INT DEFAULT 0,
+    elo_change_1v1_t2 INT DEFAULT 0,
     recorded_by INT NOT NULL,
+    is_cancelled TINYINT(1) DEFAULT 0,
     played_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (season_id) REFERENCES seasons(id),
     FOREIGN KEY (team1_attack) REFERENCES players(id),
@@ -114,6 +121,7 @@ CREATE TABLE IF NOT EXISTS elo_history (
     elo_attack INT NOT NULL,
     elo_defense INT NOT NULL,
     elo_duo INT NOT NULL,
+    elo_1v1 INT DEFAULT 1200,
     recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE,
     FOREIGN KEY (season_id) REFERENCES seasons(id) ON DELETE CASCADE,

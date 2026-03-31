@@ -53,6 +53,11 @@ function getParsedMultiplier(value, fallback) {
     return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function getLossMultiplier(value) {
+    const parsed = parseFloat(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 1;
+}
+
 function getTierGapMultiplier(tierA, tierB, multiplierValue) {
     const multiplier = getParsedMultiplier(multiplierValue, 1);
     const tierGap = Math.abs(tierA - tierB);
@@ -66,6 +71,7 @@ function getScoreBonus(scoreWinner, scoreLoser, scoreMultiplierValue) {
 
 function calculateRoleDelta(playerElo, opponentElo, ownTeamCumulativeElo, opponentTeamCumulativeElo, didWin, scoreWinner, scoreLoser, seasonConfig) {
     const baseKFactor = getParsedMultiplier(seasonConfig.base_k_factor, 32);
+    const lossMultiplier = getLossMultiplier(seasonConfig.loss_multiplier);
     const expectedScore = getExpectedScore(playerElo, opponentElo);
     const directOpponentBonus = getTierGapMultiplier(
         getRankTier(playerElo),
@@ -83,7 +89,13 @@ function calculateRoleDelta(playerElo, opponentElo, ownTeamCumulativeElo, oppone
         ? baseKFactor * (1 - expectedScore)
         : baseKFactor * expectedScore;
 
-    const totalDelta = Math.round(baseDelta * directOpponentBonus * cumulativeTeamsBonus * scoreBonus);
+    const totalDelta = Math.round(
+        baseDelta
+        * directOpponentBonus
+        * cumulativeTeamsBonus
+        * scoreBonus
+        * (didWin ? 1 : lossMultiplier)
+    );
     return didWin ? totalDelta : -totalDelta;
 }
 
@@ -150,6 +162,7 @@ function calculateMatchElo(match, ratings, seasonConfig) {
 
 function calculateDuoEloDelta(teamDuoElo, opponentDuoElo, didWin, scoreWinner, scoreLoser, seasonConfig) {
     const baseKFactor = getParsedMultiplier(seasonConfig.base_k_factor, 32);
+    const lossMultiplier = getLossMultiplier(seasonConfig.loss_multiplier);
     const expectedScore = getExpectedScore(teamDuoElo, opponentDuoElo);
     const duoRankBonus = getTierGapMultiplier(
         getRankTier(teamDuoElo),
@@ -162,7 +175,7 @@ function calculateDuoEloDelta(teamDuoElo, opponentDuoElo, didWin, scoreWinner, s
         ? baseKFactor * (1 - expectedScore)
         : baseKFactor * expectedScore;
 
-    const totalDelta = Math.round(baseDelta * duoRankBonus * scoreBonus);
+    const totalDelta = Math.round(baseDelta * duoRankBonus * scoreBonus * (didWin ? 1 : lossMultiplier));
     return didWin ? totalDelta : -totalDelta;
 }
 
@@ -194,4 +207,38 @@ function calculateDuoEloChange(t1AttackDuoElo, t1DefenseDuoElo, t2AttackDuoElo, 
     };
 }
 
-module.exports = { calculateMatchElo, calculateDuoEloChange, getRank, RANKS };
+function calculate1v1EloChange(player1Elo, player2Elo, scoreP1, scoreP2, seasonConfig) {
+    const baseKFactor = getParsedMultiplier(seasonConfig.base_k_factor, 32);
+    const lossMultiplier = getLossMultiplier(seasonConfig.loss_multiplier);
+    const p1Wins = scoreP1 > scoreP2;
+    const scoreWinner = p1Wins ? scoreP1 : scoreP2;
+    const scoreLoser = p1Wins ? scoreP2 : scoreP1;
+
+    const expectedP1 = getExpectedScore(player1Elo, player2Elo);
+    const rankBonus = getTierGapMultiplier(
+        getRankTier(player1Elo),
+        getRankTier(player2Elo),
+        seasonConfig.rank_multiplier
+    );
+    const scoreBonus = getScoreBonus(scoreWinner, scoreLoser, seasonConfig.score_multiplier);
+
+    const baseDeltaP1 = p1Wins
+        ? baseKFactor * (1 - expectedP1)
+        : baseKFactor * expectedP1;
+
+    const totalP1 = Math.round(baseDeltaP1 * rankBonus * scoreBonus * (p1Wins ? 1 : lossMultiplier));
+
+    const expectedP2 = getExpectedScore(player2Elo, player1Elo);
+    const baseDeltaP2 = !p1Wins
+        ? baseKFactor * (1 - expectedP2)
+        : baseKFactor * expectedP2;
+
+    const totalP2 = Math.round(baseDeltaP2 * rankBonus * scoreBonus * (!p1Wins ? 1 : lossMultiplier));
+
+    return {
+        elo_change_1v1_t1: p1Wins ? totalP1 : -totalP1,
+        elo_change_1v1_t2: !p1Wins ? totalP2 : -totalP2,
+    };
+}
+
+module.exports = { calculateMatchElo, calculateDuoEloChange, calculate1v1EloChange, getRank, RANKS };
