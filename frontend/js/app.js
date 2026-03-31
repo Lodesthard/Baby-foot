@@ -32,6 +32,72 @@ function formatWinrate(wins, losses) {
     return Math.round((wins / total) * 100) + '%';
 }
 
+function getToastStack() {
+    let stack = document.getElementById('toast-stack');
+    if (!stack) {
+        stack = document.createElement('div');
+        stack.id = 'toast-stack';
+        stack.className = 'toast-stack';
+        document.body.appendChild(stack);
+    }
+    return stack;
+}
+
+function showToast(message, type = 'success') {
+    const stack = getToastStack();
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    stack.appendChild(toast);
+
+    requestAnimationFrame(() => toast.classList.add('show'));
+
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 240);
+    }, 2600);
+}
+
+function syncPlayerCaches(updatedPlayer) {
+    allPlayers = allPlayers.map((player) =>
+        player.id === updatedPlayer.id ? { ...player, display_name: updatedPlayer.display_name } : player
+    );
+
+    allDuos = allDuos.map((duo) => {
+        if (duo.player1_id === updatedPlayer.id) {
+            return { ...duo, player1_name: updatedPlayer.display_name };
+        }
+        if (duo.player2_id === updatedPlayer.id) {
+            return { ...duo, player2_name: updatedPlayer.display_name };
+        }
+        return duo;
+    });
+
+    Object.keys(selectedPlayers).forEach((key) => {
+        if (selectedPlayers[key]?.id === updatedPlayer.id) {
+            selectedPlayers[key] = { ...selectedPlayers[key], display_name: updatedPlayer.display_name };
+        }
+    });
+
+    Object.keys(selected1v1).forEach((key) => {
+        if (selected1v1[key]?.id === updatedPlayer.id) {
+            selected1v1[key] = { ...selected1v1[key], display_name: updatedPlayer.display_name };
+        }
+    });
+
+    Object.keys(selectedDuos).forEach((key) => {
+        const duo = selectedDuos[key];
+        if (!duo) return;
+        if (duo.player1_id === updatedPlayer.id) {
+            selectedDuos[key] = { ...duo, player1_name: updatedPlayer.display_name };
+            return;
+        }
+        if (duo.player2_id === updatedPlayer.id) {
+            selectedDuos[key] = { ...duo, player2_name: updatedPlayer.display_name };
+        }
+    });
+}
+
 function renderSeasonInfo(season) {
     const lossPercent = Math.round(Number(season.loss_multiplier ?? 1) * 100);
     return `
@@ -358,6 +424,7 @@ let matchMode = 'solo'; // 'solo', 'duo', '1v1'
 let selectedPlayers = { 't1-attack': null, 't1-defense': null, 't2-attack': null, 't2-defense': null };
 let selectedDuos = { team1: null, team2: null };
 let selected1v1 = { player1: null, player2: null };
+let playerSearchesInitialized = false;
 
 async function loadMatchPage() {
     try {
@@ -506,6 +573,9 @@ function render1v1PlayerSearch(fieldId) {
 }
 
 function initAllPlayerSearches() {
+    if (playerSearchesInitialized) return;
+    playerSearchesInitialized = true;
+
     document.addEventListener('click', (e) => {
         if (!e.target.closest('.player-search-wrapper')) {
             document.querySelectorAll('.player-search-results').forEach(el => el.classList.remove('open'));
@@ -962,6 +1032,7 @@ async function loadProfile() {
 
         // Refresh player data from server
         setPlayer(me);
+        document.getElementById('header-user').textContent = me.display_name;
 
         let html = `<div class="card">
             <div class="card-title">Mon profil</div>
@@ -1022,10 +1093,12 @@ async function changeDisplayName(e) {
             method: 'PUT',
             body: JSON.stringify({ display_name: nameEl.value.trim() })
         });
+
         setPlayer(result.player);
+        syncPlayerCaches(result.player);
         document.getElementById('header-user').textContent = result.player.display_name;
-        msgEl.textContent = 'Pseudo mis a jour !';
-        setTimeout(() => { if (msgEl) msgEl.textContent = ''; }, 2000);
+        showToast('Pseudo mis a jour');
+        await loadProfile();
     } catch (err) {
         msgEl.className = 'error-msg';
         msgEl.textContent = err.message;
@@ -1208,7 +1281,8 @@ async function createSeason(e) {
                 loss_multiplier: parseFloat(document.getElementById('new-loss').value)
             })
         });
-        loadAdmin();
+        await loadAdmin();
+        showToast('Saison creee');
     } catch (err) {
         alert(err.message);
     }
@@ -1217,7 +1291,8 @@ async function createSeason(e) {
 async function activateSeason(id) {
     try {
         await api(`/seasons/${id}/activate`, { method: 'PUT' });
-        loadAdmin();
+        await loadAdmin();
+        showToast('Saison activee');
     } catch (err) { alert(err.message); }
 }
 
@@ -1225,7 +1300,8 @@ async function endSeason(id) {
     if (!confirm('Terminer cette saison ?')) return;
     try {
         await api(`/seasons/${id}/end`, { method: 'PUT' });
-        loadAdmin();
+        await loadAdmin();
+        showToast('Saison terminee');
     } catch (err) { alert(err.message); }
 }
 
@@ -1243,8 +1319,8 @@ async function updateCoeffs(e, id) {
                 loss_multiplier: parseFloat(document.getElementById('edit-loss').value)
             })
         });
-        document.getElementById('admin-msg').textContent = 'Coefficients mis a jour';
-        setTimeout(() => { const el = document.getElementById('admin-msg'); if(el) el.textContent = ''; }, 2000);
+        await loadAdmin();
+        showToast('Coefficients de saison mis a jour');
     } catch (err) { alert(err.message); }
 }
 
