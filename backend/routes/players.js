@@ -65,7 +65,8 @@ router.get('/:id/matches', authenticateToken, async (req, res) => {
              JOIN players p1d ON m.team1_defense = p1d.id
              JOIN players p2a ON m.team2_attack = p2a.id
              JOIN players p2d ON m.team2_defense = p2d.id
-             WHERE m.season_id = ? AND (m.team1_attack = ? OR m.team1_defense = ? OR m.team2_attack = ? OR m.team2_defense = ?)
+             WHERE m.season_id = ? AND m.is_cancelled = 0
+               AND (m.team1_attack = ? OR m.team1_defense = ? OR m.team2_attack = ? OR m.team2_defense = ?)
              ORDER BY m.played_at DESC LIMIT 50`,
             [season[0].id, req.params.id, req.params.id, req.params.id, req.params.id]
         );

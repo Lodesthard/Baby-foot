@@ -83,4 +83,26 @@ router.get('/me', authenticateToken, async (req, res) => {
     }
 });
 
+// Changer le pseudo (display_name)
+router.put('/display-name', authenticateToken, async (req, res) => {
+    try {
+        const { display_name } = req.body;
+        if (!display_name || display_name.trim().length < 2) {
+            return res.status(400).json({ error: 'Le pseudo doit faire au moins 2 caractères' });
+        }
+        if (display_name.trim().length > 30) {
+            return res.status(400).json({ error: 'Le pseudo ne peut pas dépasser 30 caractères' });
+        }
+
+        await pool.query('UPDATE players SET display_name = ? WHERE id = ?', [display_name.trim(), req.user.id]);
+
+        // Mettre à jour le localStorage côté client
+        const [rows] = await pool.query('SELECT id, display_name, is_admin FROM players WHERE id = ?', [req.user.id]);
+        res.json({ message: 'Pseudo mis à jour', player: rows[0] });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
 module.exports = router;

@@ -6,6 +6,15 @@ const mysql = require("mysql2/promise");
 const ensureSchema = require("../config/ensure-schema");
 
 async function initDB() {
+	const adminUser = (process.env.ADMIN_USER || "admin").trim();
+	const adminPassword = process.env.ADMIN_PASSWORD?.trim();
+
+	if (!adminPassword) {
+		throw new Error(
+			"ADMIN_PASSWORD est manquant dans backend/.env. Definis ADMIN_USER et ADMIN_PASSWORD avant de lancer init-db.",
+		);
+	}
+
 	const conn = await mysql.createConnection({
 		host: process.env.DB_HOST || "localhost",
 		user: process.env.DB_USER || "root",
@@ -26,11 +35,11 @@ async function initDB() {
 	console.log("Schema cree.");
 
 	// Creer l'admin par defaut
-	const hash = await bcrypt.hash(process.env.ADMIN_PASSWORD, 10);
+	const hash = await bcrypt.hash(adminPassword, 10);
 	await conn.query(
 		`INSERT IGNORE INTO players (identifier, password_hash, display_name, is_admin)
-         VALUES ('${process.env.ADMIN_USER}', ?, 'Administrateur', 1)`,
-		[hash],
+         VALUES (?, ?, 'Administrateur', 1)`,
+		[adminUser, hash],
 	);
 	console.log("Compte admin créé");
 

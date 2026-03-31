@@ -132,4 +132,38 @@ router.get('/duo', authenticateToken, async (req, res) => {
     }
 });
 
+// Classement 1v1
+router.get('/1v1', authenticateToken, async (req, res) => {
+    try {
+        const seasonId = await getActiveSeasonId();
+        if (!seasonId) return res.json([]);
+
+        await ensureSeasonRatings(seasonId);
+
+        const [rows] = await pool.query(
+            `SELECT pr.*, p.display_name
+             FROM player_ratings pr
+             JOIN players p ON pr.player_id = p.id
+             WHERE pr.season_id = ?
+             ORDER BY pr.elo_1v1 DESC, p.display_name ASC`,
+            [seasonId]
+        );
+
+        const ranked = rows.map((r, i) => ({
+            position: i + 1,
+            player_id: r.player_id,
+            display_name: r.display_name,
+            elo: r.elo_1v1,
+            rank: getRank(r.elo_1v1),
+            wins: r.wins_1v1,
+            losses: r.losses_1v1,
+        }));
+
+        res.json(ranked);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
 module.exports = router;
