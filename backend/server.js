@@ -22,6 +22,7 @@ app.use('/api/rankings', require('./routes/rankings'));
 app.use('/api/seasons', require('./routes/seasons'));
 app.use('/api/duos', require('./routes/duos'));
 app.use('/api/admin', require('./routes/admin'));
+app.use('/api/tournaments', require('./routes/tournaments'));
 
 // SPA fallback
 app.get('*', (req, res) => {
