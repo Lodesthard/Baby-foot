@@ -21,7 +21,7 @@ jobs:
 
       - name: Deploy
         run: |
-          rsync -az --delete ./frontend ./database ./backend root@${{ secrets.SERVER_IP }}:/opt/Baby-foot/
+          rsync -az --delete --exclude='.env' ./frontend ./database ./backend root@${{ secrets.SERVER_IP }}:/opt/Baby-foot/
 
       - name: Restart app
         run: |
