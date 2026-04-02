@@ -166,4 +166,39 @@ router.get('/1v1', authenticateToken, async (req, res) => {
     }
 });
 
+// Classement global (somme des positions attaque + defense + 1v1)
+router.get('/global', authenticateToken, async (req, res) => {
+    try {
+        const seasonId = await getActiveSeasonId();
+        if (!seasonId) return res.json([]);
+
+        await ensureSeasonRatings(seasonId);
+
+        const [rows] = await pool.query(
+            `SELECT pr.*, p.display_name
+             FROM player_ratings pr
+             JOIN players p ON pr.player_id = p.id
+             WHERE pr.season_id = ?
+             ORDER BY (pr.elo_attack + pr.elo_defense + pr.elo_1v1) DESC, p.display_name ASC`,
+            [seasonId]
+        );
+
+        const ranked = rows.map((r, i) => ({
+            position: i + 1,
+            player_id: r.player_id,
+            display_name: r.display_name,
+            elo: r.elo_attack + r.elo_defense + r.elo_1v1,
+            rank: getRank(Math.round((r.elo_attack + r.elo_defense + r.elo_1v1) / 3)),
+            elo_attack: r.elo_attack,
+            elo_defense: r.elo_defense,
+            elo_1v1: r.elo_1v1,
+        }));
+
+        res.json(ranked);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
 module.exports = router;

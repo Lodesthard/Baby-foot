@@ -884,7 +884,7 @@ function showEloResult(result, matchData) {
 }
 
 // ===== Rankings =====
-let rankingType = 'attack';
+let rankingType = 'global';
 let rankingData = [];
 
 async function loadRankings() {
@@ -894,6 +894,7 @@ async function loadRankings() {
 
 function renderRankingTabs() {
     document.getElementById('ranking-tabs').innerHTML = `
+        <button class="${rankingType === 'global' ? 'active' : ''}" onclick="switchRanking('global')">Global</button>
         <button class="${rankingType === 'attack' ? 'active' : ''}" onclick="switchRanking('attack')">Attaque</button>
         <button class="${rankingType === 'defense' ? 'active' : ''}" onclick="switchRanking('defense')">Defense</button>
         <button class="${rankingType === 'duo' ? 'active' : ''}" onclick="switchRanking('duo')">Duo</button>
@@ -950,30 +951,46 @@ function renderRankingList(data) {
 
     let html = '';
     for (const r of data) {
-        const colorClass = getRankColorClass(r.rank.name);
         const posClass = r.position <= 3 ? `top${r.position}` : '';
-        const total = r.wins + r.losses;
-        const wr = total > 0 ? Math.round((r.wins / total) * 100) + '%' : '-';
-        let name;
-        if (rankingType === 'duo') {
-            name = r.duo_name
-                ? `<span style="color:var(--gold)">${r.duo_name}</span><br><small style="color:var(--text-muted)">${r.player1_name} & ${r.player2_name}</small>`
-                : `${r.player1_name} & ${r.player2_name}`;
-        } else {
-            name = r.display_name;
-        }
 
-        html += `<div class="ranking-item">
-            <div class="ranking-pos ${posClass}">#${r.position}</div>
-            <div class="ranking-info">
-                <div class="ranking-name">${name}</div>
-                <div class="ranking-record">${r.wins}V ${r.losses}D | WR: ${wr}</div>
-            </div>
-            <div class="ranking-elo">
-                <div class="elo-value rank-${colorClass}">${r.elo}</div>
-                <div class="rank-badge badge-${colorClass}">${r.rank.name}</div>
-            </div>
-        </div>`;
+        if (rankingType === 'global') {
+            const colorClass = getRankColorClass(r.rank.name);
+            html += `<div class="ranking-item">
+                <div class="ranking-pos ${posClass}">#${r.position}</div>
+                <div class="ranking-info">
+                    <div class="ranking-name">${r.display_name}</div>
+                    <div class="ranking-record">ATK ${r.elo_attack} | DEF ${r.elo_defense} | 1v1 ${r.elo_1v1}</div>
+                </div>
+                <div class="ranking-elo">
+                    <div class="elo-value rank-${colorClass}">${r.elo}</div>
+                    <div class="rank-badge badge-${colorClass}">${r.rank.name}</div>
+                </div>
+            </div>`;
+        } else {
+            const colorClass = getRankColorClass(r.rank.name);
+            const total = r.wins + r.losses;
+            const wr = total > 0 ? Math.round((r.wins / total) * 100) + '%' : '-';
+            let name;
+            if (rankingType === 'duo') {
+                name = r.duo_name
+                    ? `<span style="color:var(--gold)">${r.duo_name}</span><br><small style="color:var(--text-muted)">${r.player1_name} & ${r.player2_name}</small>`
+                    : `${r.player1_name} & ${r.player2_name}`;
+            } else {
+                name = r.display_name;
+            }
+
+            html += `<div class="ranking-item">
+                <div class="ranking-pos ${posClass}">#${r.position}</div>
+                <div class="ranking-info">
+                    <div class="ranking-name">${name}</div>
+                    <div class="ranking-record">${r.wins}V ${r.losses}D | WR: ${wr}</div>
+                </div>
+                <div class="ranking-elo">
+                    <div class="elo-value rank-${colorClass}">${r.elo}</div>
+                    <div class="rank-badge badge-${colorClass}">${r.rank.name}</div>
+                </div>
+            </div>`;
+        }
     }
     container.innerHTML = html;
 }
