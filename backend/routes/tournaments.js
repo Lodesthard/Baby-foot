@@ -493,7 +493,9 @@ router.post('/:id/matches/:matchId/result', authenticateToken, requireAdmin, asy
                     base_k_factor: s.base_k_factor,
                     rank_multiplier: s.rank_multiplier,
                     score_multiplier: s.score_multiplier,
-                    loss_multiplier: s.loss_multiplier
+                    loss_multiplier: s.loss_multiplier,
+                    win_streak_multiplier: s.win_streak_multiplier,
+                    loss_streak_multiplier: s.loss_streak_multiplier
                 }
             );
 
@@ -570,7 +572,9 @@ router.post('/:id/matches/:matchId/result', authenticateToken, requireAdmin, asy
                 rank_multiplier: s.rank_multiplier,
                 score_multiplier: s.score_multiplier,
                 duo_rank_multiplier: s.duo_rank_multiplier,
-                loss_multiplier: s.loss_multiplier
+                loss_multiplier: s.loss_multiplier,
+                win_streak_multiplier: s.win_streak_multiplier,
+                loss_streak_multiplier: s.loss_streak_multiplier
             };
 
             const eloChanges = calculateMatchElo({ score_team1: score1, score_team2: score2 }, ratings, seasonConfig);

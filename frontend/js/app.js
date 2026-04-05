@@ -2,17 +2,35 @@
 // App Principal
 // ============================================
 
-const RANK_COLORS = {
-    'Iron': 'iron', 'Bronze': 'bronze', 'Silver': 'silver', 'Gold': 'gold',
-    'Platinum': 'platinum', 'Diamond': 'diamond', 'Master': 'master',
-    'Grandmaster': 'grandmaster', 'Challenger': 'challenger'
+const DEFAULT_RANK_KEY = 'Iron';
+const RANK_META = {
+    Iron: { colorClass: 'iron', asset: 'iron.png' },
+    Bronze: { colorClass: 'bronze', asset: 'bronze.png' },
+    Silver: { colorClass: 'silver', asset: 'silver.png' },
+    Gold: { colorClass: 'gold', asset: 'gold.png' },
+    Platinum: { colorClass: 'platinum', asset: 'platine.png' },
+    Emerald: { colorClass: 'emerald', asset: 'emerald.png' },
+    Diamond: { colorClass: 'diamond', asset: 'diamond.png' },
+    Master: { colorClass: 'master', asset: 'master.png' },
+    Grandmaster: { colorClass: 'grandmaster', asset: 'grandmaster.png' },
+    Challenger: { colorClass: 'challenger', asset: 'challenger.png' },
 };
 
+function getRankBaseName(rankName) {
+    const normalizedRankName = String(rankName || '');
+    return Object.keys(RANK_META).find((key) => normalizedRankName.startsWith(key)) || DEFAULT_RANK_KEY;
+}
+
+function getRankMeta(rankName) {
+    return RANK_META[getRankBaseName(rankName)] || RANK_META[DEFAULT_RANK_KEY];
+}
+
 function getRankColorClass(rankName) {
-    for (const [key, val] of Object.entries(RANK_COLORS)) {
-        if (rankName.startsWith(key)) return val;
-    }
-    return 'iron';
+    return getRankMeta(rankName).colorClass;
+}
+
+function getRankIconUrl(rankName) {
+    return `/assets/${getRankMeta(rankName).asset}`;
 }
 
 function formatDate(dateStr) {
@@ -30,6 +48,39 @@ function formatWinrate(wins, losses) {
     const total = wins + losses;
     if (total === 0) return '-';
     return Math.round((wins / total) * 100) + '%';
+}
+
+function getStreakStepValue(season, type) {
+    const key = type === 'win' ? 'win_streak_multiplier' : 'loss_streak_multiplier';
+    const parsed = parseFloat(season?.[key]);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0.05;
+}
+
+function getStreakStepPercent(season, type) {
+    return Math.round(getStreakStepValue(season, type) * 100);
+}
+
+function getStreakBonusPercent(season, type, streakCount) {
+    return Math.round(Math.min(Math.abs(streakCount || 0), 5) * getStreakStepValue(season, type) * 100);
+}
+
+function buildGlobalSummary(ratings) {
+    const totalWins = (ratings?.wins_attack || 0) + (ratings?.wins_defense || 0) + (ratings?.wins_1v1 || 0);
+    const totalLosses = (ratings?.losses_attack || 0) + (ratings?.losses_defense || 0) + (ratings?.losses_1v1 || 0);
+    const totalGames = totalWins + totalLosses;
+    const winrate = totalGames > 0 ? Math.round((totalWins / totalGames) * 100) : 0;
+    const averageElo = Math.round(((ratings?.elo_attack || 0) + (ratings?.elo_defense || 0) + (ratings?.elo_1v1 || 0)) / 3);
+    const rankName = getRankName(averageElo);
+
+    return {
+        totalWins,
+        totalLosses,
+        totalGames,
+        winrate,
+        averageElo,
+        rankName,
+        colorClass: getRankColorClass(rankName),
+    };
 }
 
 function getToastStack() {
@@ -58,9 +109,68 @@ function showToast(message, type = 'success') {
     }, 2600);
 }
 
+function renderRankIcon(rankName, size, extraClass) {
+    const iconSize = size || 52;
+    const className = extraClass ? ` ${extraClass}` : '';
+    return `<img src="${getRankIconUrl(rankName)}" alt="${rankName}" class="rank-icon${className}" loading="lazy" decoding="async" style="width:${iconSize}px;height:${iconSize}px;">`;
+}
+
+function renderStatBox(label, elo, wins, losses) {
+    const rankName = getRankName(elo);
+    const colorClass = getRankColorClass(rankName);
+
+    return `<div class="stat-box rank-stat-box">
+        <div class="label">${label}</div>
+        <div class="rank-stat-icon-wrap">${renderRankIcon(rankName, 54, 'rank-stat-icon')}</div>
+        <div class="value rank-${colorClass}">${elo}</div>
+        <div class="rank-name rank-${colorClass}">${rankName}</div>
+        <div class="ranking-record">${wins}V ${losses}D</div>
+        <div class="winrate">WR: ${formatWinrate(wins, losses)}</div>
+    </div>`;
+}
+
+function renderCompactStatBox(label, elo) {
+    const rankName = getRankName(elo);
+    const colorClass = getRankColorClass(rankName);
+
+    return `<div class="stat-box rank-stat-box rank-stat-box-compact">
+        <div class="label">${label}</div>
+        <div class="rank-stat-icon-wrap">${renderRankIcon(rankName, 42, 'rank-stat-icon')}</div>
+        <div class="value rank-${colorClass}" style="font-size:18px">${elo}</div>
+        <div class="rank-name rank-${colorClass}" style="font-size:10px">${rankName}</div>
+    </div>`;
+}
+
+function renderGlobalRankBanner(ratings, globalRank, totalPlayers, options = {}) {
+    const summary = buildGlobalSummary(ratings);
+    const label = options.label || 'RANG GLOBAL';
+    const iconSize = options.iconSize || 74;
+    const compact = options.compact ? ' compact' : '';
+
+    return `<div class="global-rank-banner${compact}">
+        <div class="global-rank-left">
+            <div class="global-rank-visual">
+                <div class="global-rank-icon">${renderRankIcon(summary.rankName, iconSize, 'global-rank-image')}</div>
+                <div>
+                    <div class="global-rank-label">${label}</div>
+                    <div class="global-rank-position">#${globalRank || '?'} <span style="color:var(--text-secondary);font-size:14px">/ ${totalPlayers || '?'}</span></div>
+                    <div class="rank-badge badge-${summary.colorClass}" style="margin-top:6px">${summary.rankName}</div>
+                </div>
+            </div>
+        </div>
+        <div class="global-rank-right">
+            <div class="global-wr-value ${summary.winrate >= 50 ? 'elo-positive' : 'elo-negative'}">${summary.winrate}%</div>
+            <div class="global-wr-label">WINRATE GLOBAL</div>
+            <div style="font-size:12px;color:var(--text-secondary)">${summary.totalWins}V ${summary.totalLosses}D</div>
+        </div>
+    </div>`;
+}
+
 function syncPlayerCaches(updatedPlayer) {
     allPlayers = allPlayers.map((player) =>
-        player.id === updatedPlayer.id ? { ...player, display_name: updatedPlayer.display_name } : player
+        player.id === updatedPlayer.id
+            ? { ...player, display_name: updatedPlayer.display_name, profile_photo: updatedPlayer.profile_photo ?? player.profile_photo }
+            : player
     );
 
     allDuos = allDuos.map((duo) => {
@@ -100,13 +210,17 @@ function syncPlayerCaches(updatedPlayer) {
 
 function renderSeasonInfo(season) {
     const lossPercent = Math.round(Number(season.loss_multiplier ?? 1) * 100);
+    const winStreakPercent = getStreakStepPercent(season, 'win');
+    const lossStreakPercent = getStreakStepPercent(season, 'loss');
     return `
-        <div class="season-info">K: ${season.base_k_factor} | Duel direct ATK/DEF: x${season.rank_multiplier} | Equipes / Duo: x${season.duo_rank_multiplier} | Score: x${season.score_multiplier} | Defaite: ${lossPercent}%</div>
-        <div class="season-info season-info-secondary">Solo : duel direct + ecart cumule des equipes + score. Double : meme logique ATK/DEF + ELO duo selon l'ecart de rang des duos. Le coeff defaite regle le pourcentage de points perdus.</div>
+        <div class="season-info">K: ${season.base_k_factor} | Duel direct ATK/DEF: x${season.rank_multiplier} | Equipes / Duo: x${season.duo_rank_multiplier} | Score: x${season.score_multiplier} | Defaite: ${lossPercent}% | Serie V:+${winStreakPercent}% | Serie D:+${lossStreakPercent}%</div>
+        <div class="season-info season-info-secondary">Solo : duel direct + ecart cumule des equipes + score + serie. Double : meme logique ATK/DEF + ELO duo selon l'ecart de rang des duos, le score et la serie moyenne. Le coeff defaite regle le pourcentage de points perdus.</div>
     `;
 }
 
-function renderCoeffHelp() {
+function renderCoeffHelp(season) {
+    const winStreakPercent = getStreakStepPercent(season, 'win');
+    const lossStreakPercent = getStreakStepPercent(season, 'loss');
     return `
         <div class="coeff-help">
             <div><strong>K Factor</strong> : base des gains et pertes ELO.</div>
@@ -114,6 +228,8 @@ function renderCoeffHelp() {
             <div><strong>Score Mult</strong> : poids de l'ecart au score.</div>
             <div><strong>Equipes / Duo</strong> : poids de l'ecart cumule des equipes en ATK/DEF, et de l'ecart de rang entre les deux duos en double.</div>
             <div><strong>Coeff defaite</strong> : pourcentage de points perdus par rapport a la perte normale. Exemple : 0.75 = 75% de la perte standard.</div>
+            <div><strong>Serie victoire</strong> : +${winStreakPercent}% par victoire consecutive, capee a 5 piles.</div>
+            <div><strong>Serie defaite</strong> : +${lossStreakPercent}% par defaite consecutive, capee a 5 piles.</div>
         </div>
     `;
 }
@@ -123,8 +239,8 @@ function renderMatchEloHelp() {
         return `
             <div class="rule-card">
                 <div class="rule-card-title">Regles ELO du double</div>
-                <div class="rule-card-text">ATK / DEF : duel direct + ecart cumule des deux equipes + score.</div>
-                <div class="rule-card-text">ELO duo : ecart de rang entre les deux duos + score.</div>
+                <div class="rule-card-text">ATK / DEF : duel direct + ecart cumule des deux equipes + score + serie.</div>
+                <div class="rule-card-text">ELO duo : ecart de rang entre les deux duos + score + serie moyenne de l'equipe.</div>
             </div>
         `;
     }
@@ -132,7 +248,7 @@ function renderMatchEloHelp() {
         return `
             <div class="rule-card">
                 <div class="rule-card-title">Regles ELO du 1v1</div>
-                <div class="rule-card-text">L'ELO 1v1 depend du duel direct entre les deux joueurs et du score.</div>
+                <div class="rule-card-text">L'ELO 1v1 depend du duel direct entre les deux joueurs, du score et de la serie.</div>
             </div>
         `;
     }
@@ -140,9 +256,17 @@ function renderMatchEloHelp() {
     return `
         <div class="rule-card">
             <div class="rule-card-title">Regles ELO du solo</div>
-            <div class="rule-card-text">L'ELO attaque et defense depend du duel direct, de l'ecart cumule des deux equipes et du score.</div>
+            <div class="rule-card-text">L'ELO attaque et defense depend du duel direct, de l'ecart cumule des deux equipes, du score et de la serie.</div>
         </div>
     `;
+}
+
+function avatarHtml(photoUrl, size) {
+    size = size || 40;
+    if (photoUrl) {
+        return `<img src="${photoUrl}" class="avatar" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;">`;
+    }
+    return `<div class="avatar-placeholder" style="width:${size}px;height:${size}px;border-radius:50%;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;font-size:${Math.round(size*0.4)}px;color:var(--text-muted);">?</div>`;
 }
 
 // ===== Navigation =====
@@ -166,6 +290,7 @@ function navigate(page) {
         case 'rankings': loadRankings(); break;
         case 'tournaments': loadTournaments(); break;
         case 'history': loadHistory(); break;
+        case 'rules': loadRules(); break;
         case 'profile': loadProfile(); break;
         case 'admin': loadAdmin(); break;
     }
@@ -187,12 +312,22 @@ function showApp() {
     const adminBtn = document.querySelector('[data-page="admin"]');
     if (adminBtn) adminBtn.style.display = player?.is_admin ? '' : 'none';
 
+    // Check if we arrived via lobby QR code
+    const params = new URLSearchParams(window.location.search);
+    const lobbyCode = params.get('lobby');
+    if (lobbyCode) {
+        window.history.replaceState({}, '', '/');
+        navigate('match');
+        setTimeout(() => joinLobbyByCode(lobbyCode), 500);
+        return;
+    }
+
     navigate('home');
 }
 
 async function handleLogin(e) {
     e.preventDefault();
-    const identifier = document.getElementById('login-id').value;
+    const identifier = document.getElementById('login-id').value.trimEnd();
     const password = document.getElementById('login-pass').value;
     const errEl = document.getElementById('login-error');
     errEl.textContent = '';
@@ -212,9 +347,9 @@ async function handleLogin(e) {
 
 async function handleRegister(e) {
     e.preventDefault();
-    const identifier = document.getElementById('reg-id').value;
+    const identifier = document.getElementById('reg-id').value.trimEnd();
     const password = document.getElementById('reg-pass').value;
-    const display_name = document.getElementById('reg-name').value;
+    const display_name = document.getElementById('reg-name').value.trim();
     const errEl = document.getElementById('reg-error');
     errEl.textContent = '';
 
@@ -252,9 +387,11 @@ async function loadHome() {
     const container = document.getElementById('home-content');
     try {
         const player = getPlayer();
-        const stats = await api(`/players/${player.id}/stats`);
-        const matches = await api(`/players/${player.id}/matches`);
-        const season = await api('/seasons/active');
+        const [stats, matches, season] = await Promise.all([
+            api(`/players/${player.id}/stats`),
+            api(`/players/${player.id}/matches`),
+            api('/seasons/active')
+        ]);
 
         let html = '';
 
@@ -267,52 +404,35 @@ async function loadHome() {
             </div>`;
         }
 
+        // Global rank + winrate banner
         if (stats?.ratings) {
             const r = stats.ratings;
-            html += `<div class="stats-grid stats-grid-4">
-                <div class="stat-box">
-                    <div class="label">Attaque</div>
-                    <div class="value rank-${getRankColorClass(getRankName(r.elo_attack))}">${r.elo_attack}</div>
-                    <div class="rank-name rank-${getRankColorClass(getRankName(r.elo_attack))}">${getRankName(r.elo_attack)}</div>
-                    <div class="ranking-record">${r.wins_attack}V ${r.losses_attack}D</div>
-                    <div class="winrate">WR: ${formatWinrate(r.wins_attack, r.losses_attack)}</div>
-                </div>
-                <div class="stat-box">
-                    <div class="label">Defense</div>
-                    <div class="value rank-${getRankColorClass(getRankName(r.elo_defense))}">${r.elo_defense}</div>
-                    <div class="rank-name rank-${getRankColorClass(getRankName(r.elo_defense))}">${getRankName(r.elo_defense)}</div>
-                    <div class="ranking-record">${r.wins_defense}V ${r.losses_defense}D</div>
-                    <div class="winrate">WR: ${formatWinrate(r.wins_defense, r.losses_defense)}</div>
-                </div>
-                <div class="stat-box">
-                    <div class="label">Duo</div>
-                    <div class="value rank-${getRankColorClass(getRankName(r.elo_duo))}">${r.elo_duo}</div>
-                    <div class="rank-name rank-${getRankColorClass(getRankName(r.elo_duo))}">${getRankName(r.elo_duo)}</div>
-                    <div class="ranking-record">${r.wins_duo}V ${r.losses_duo}D</div>
-                    <div class="winrate">WR: ${formatWinrate(r.wins_duo, r.losses_duo)}</div>
-                </div>
-                <div class="stat-box">
-                    <div class="label">1v1</div>
-                    <div class="value rank-${getRankColorClass(getRankName(r.elo_1v1))}">${r.elo_1v1}</div>
-                    <div class="rank-name rank-${getRankColorClass(getRankName(r.elo_1v1))}">${getRankName(r.elo_1v1)}</div>
-                    <div class="ranking-record">${r.wins_1v1}V ${r.losses_1v1}D</div>
-                    <div class="winrate">WR: ${formatWinrate(r.wins_1v1, r.losses_1v1)}</div>
-                </div>
-            </div>`;
+            html += renderGlobalRankBanner(r, stats.global_rank, stats.total_players);
 
-            // Winrate global
-            const totalWins = r.wins_attack + r.wins_defense + r.wins_1v1;
-            const totalLosses = r.losses_attack + r.losses_defense + r.losses_1v1;
-            const totalGames = totalWins + totalLosses;
-            if (totalGames > 0) {
-                const wr = Math.round((totalWins / totalGames) * 100);
-                html += `<div class="winrate-banner">
-                    <span>Winrate global</span>
-                    <span class="${wr >= 50 ? 'elo-positive' : 'elo-negative'}">${wr}%</span>
-                    <span class="winrate-detail">${totalWins}V ${totalLosses}D (${totalGames} matchs)</span>
-                </div>`;
+            // Streak display
+            if (r.current_win_streak > 1) {
+                html += `<div class="streak-banner streak-win">${r.current_win_streak} victoires d'affilée (+${getStreakBonusPercent(season, 'win', r.current_win_streak)}% bonus ELO)</div>`;
+            } else if (r.current_loss_streak > 1) {
+                html += `<div class="streak-banner streak-loss">${r.current_loss_streak} defaites d'affilée (+${getStreakBonusPercent(season, 'loss', r.current_loss_streak)}% perte ELO)</div>`;
             }
+
+            html += `<div class="stats-grid stats-grid-4">
+                ${renderStatBox('Attaque', r.elo_attack, r.wins_attack, r.losses_attack)}
+                ${renderStatBox('Defense', r.elo_defense, r.wins_defense, r.losses_defense)}
+                ${renderStatBox('Duo', r.elo_duo, r.wins_duo, r.losses_duo)}
+                ${renderStatBox('1v1', r.elo_1v1, r.wins_1v1, r.losses_1v1)}
+            </div>`;
         }
+
+        // Player search
+        html += `<div class="section-title">Rechercher un joueur</div>
+            <div class="player-search-wrapper" style="margin-bottom:16px">
+                <input type="text" class="search-input" id="home-player-search"
+                    placeholder="Rechercher un profil..." autocomplete="off"
+                    oninput="onHomePlayerSearch(this.value)"
+                    style="margin-bottom:0">
+                <div class="player-search-results" id="home-search-results"></div>
+            </div>`;
 
         // Duo
         if (stats?.duo) {
@@ -342,6 +462,113 @@ async function loadHome() {
         container.innerHTML = html;
     } catch (err) {
         container.innerHTML = `<div class="empty-state">${err.message}</div>`;
+    }
+}
+
+// Home player search
+async function onHomePlayerSearch(query) {
+    const resultsEl = document.getElementById('home-search-results');
+    if (!resultsEl) return;
+    const q = query.trim();
+    if (q.length < 1) {
+        resultsEl.classList.remove('open');
+        return;
+    }
+
+    try {
+        const players = await api(`/players/search?q=${encodeURIComponent(q)}`);
+        if (players.length === 0) {
+            resultsEl.innerHTML = '<div class="player-search-option" style="color:var(--text-muted)">Aucun joueur</div>';
+        } else {
+            resultsEl.innerHTML = players.map(p =>
+                `<div class="player-search-option player-search-option-rich" onclick="showPlayerProfile(${p.id})">
+                    ${avatarHtml(p.profile_photo, 24)}
+                    <div>
+                        <div>${p.display_name}</div>
+                        ${p.identifier ? `<div class="player-search-subtitle">@${p.identifier}</div>` : ''}
+                    </div>
+                </div>`
+            ).join('');
+        }
+        resultsEl.classList.add('open');
+    } catch (err) {
+        resultsEl.classList.remove('open');
+    }
+}
+
+// Show a player's profile overlay
+async function showPlayerProfile(playerId) {
+    const overlay = document.getElementById('player-profile-overlay');
+    const box = document.getElementById('player-profile-box');
+    overlay.style.display = 'flex';
+    box.innerHTML = '<div class="loading">Chargement...</div>';
+
+    // Close search results
+    document.querySelectorAll('.player-search-results').forEach(el => el.classList.remove('open'));
+
+    try {
+        const me = getPlayer();
+        const [stats, matches, h2h] = await Promise.all([
+            api(`/players/${playerId}/stats`),
+            api(`/players/${playerId}/matches`),
+            me && me.id !== playerId ? api(`/players/${me.id}/vs/${playerId}`) : Promise.resolve(null)
+        ]);
+
+        const p = stats.player;
+        const r = stats.ratings;
+
+        let html = `<div class="player-profile-header">
+            <div class="player-profile-avatar">${avatarHtml(p.profile_photo, 64)}</div>
+            <div class="player-profile-headings">
+                <div style="font-size:20px;font-weight:800">${p.display_name}</div>
+                ${p.identifier ? `<div class="player-profile-identifier">@${p.identifier}</div>` : ''}
+                ${stats.global_rank ? `<div style="font-size:13px;color:var(--text-secondary)">Rang global #${stats.global_rank} / ${stats.total_players}</div>` : ''}
+            </div>
+        </div>`;
+
+        if (r) {
+            html += renderGlobalRankBanner(r, stats.global_rank, stats.total_players, {
+                compact: true,
+                label: 'RANG ACTUEL',
+                iconSize: 60,
+            });
+
+            html += `<div class="stats-grid stats-grid-4" style="margin-bottom:12px">
+                ${renderCompactStatBox('ATK', r.elo_attack)}
+                ${renderCompactStatBox('DEF', r.elo_defense)}
+                ${renderCompactStatBox('DUO', r.elo_duo)}
+                ${renderCompactStatBox('1v1', r.elo_1v1)}
+            </div>`;
+
+            if (r.current_win_streak > 0) {
+                html += `<div class="streak-banner streak-win compact">${r.current_win_streak} victoires de suite en cours</div>`;
+            } else if (r.current_loss_streak > 0) {
+                html += `<div class="streak-banner streak-loss compact">${r.current_loss_streak} defaites de suite en cours</div>`;
+            }
+        }
+
+        if (h2h) {
+            html += `<div class="h2h-banner">
+                <div class="h2h-label">WINRATE GLOBAL CONTRE CE PROFIL</div>
+                ${h2h.total > 0
+                    ? `<div class="h2h-value ${h2h.winrate >= 50 ? 'elo-positive' : 'elo-negative'}">${h2h.winrate}%</div>
+                       <div class="h2h-detail">${h2h.wins}V ${h2h.losses}D (${h2h.total} matchs)</div>`
+                    : `<div class="h2h-detail">Aucun match en commun</div>`}
+            </div>`;
+        }
+
+        if (matches.length > 0) {
+            html += `<div class="section-title">Derniers matchs</div>`;
+            for (const match of matches.slice(0, 4)) {
+                html += renderMatchCard(match, playerId);
+            }
+        }
+
+        html += `<button class="btn btn-secondary btn-small" style="margin-top:12px" onclick="document.getElementById('player-profile-overlay').style.display='none'">Fermer</button>`;
+
+        box.innerHTML = html;
+    } catch (err) {
+        box.innerHTML = `<div class="empty-state">${err.message}</div><button class="btn btn-secondary btn-small" style="margin-top:12px" onclick="document.getElementById('player-profile-overlay').style.display='none'">Fermer</button>`;
     }
 }
 
@@ -426,6 +653,8 @@ let selectedPlayers = { 't1-attack': null, 't1-defense': null, 't2-attack': null
 let selectedDuos = { team1: null, team2: null };
 let selected1v1 = { player1: null, player2: null };
 let playerSearchesInitialized = false;
+let currentLobby = null;
+let lobbyRefreshTimer = null;
 
 async function loadMatchPage() {
     try {
@@ -464,6 +693,12 @@ function renderMatchForm() {
             <div id="match-error" class="error-msg"></div>
             <button type="submit" class="btn">Enregistrer le match</button>
         </form>
+
+        <div class="section-title" style="margin-top:24px">OU</div>
+        <div class="lobby-section">
+            <button class="btn btn-secondary" onclick="showCreateLobby()">Creer un lobby QR Code</button>
+            <button class="btn btn-secondary" style="margin-top:8px" onclick="showJoinLobby()">Rejoindre un lobby</button>
+        </div>
     `;
 
     renderTeamsContainer();
@@ -849,7 +1084,7 @@ function showEloResult(result, matchData) {
             <div style="font-size:24px;font-weight:800;margin:8px 0;">${matchData.score_team1} - ${matchData.score_team2}</div>
             ${result.is_duo ? '<div style="font-size:11px;color:var(--gold);margin-bottom:8px;">MATCH DUO</div>' : ''}
             <div class="section-title">Changements ELO ATK / DEF</div>
-            <div class="result-help">Calcules avec le duel direct, l'ecart cumule des deux equipes et le score.</div>
+            <div class="result-help">Calcules avec le duel direct, l'ecart cumule des deux equipes, le score et la serie.</div>
             <div class="elo-result-item">
                 <span>${getName(matchData.team1_attack)} (ATK)</span>
                 ${formatEloChange(changes.elo_change_t1_attack)}
@@ -882,6 +1117,433 @@ function showEloResult(result, matchData) {
         </div>
     `;
     document.body.appendChild(overlay);
+}
+
+// ===== Lobby System =====
+function showCreateLobby() {
+    const overlay = document.createElement('div');
+    overlay.className = 'elo-result-overlay';
+    overlay.id = 'lobby-create-overlay';
+    overlay.innerHTML = `
+        <div class="elo-result-box">
+            <h2>Creer un lobby</h2>
+            <div class="form-group">
+                <label>Type de match</label>
+                <div class="mode-toggle">
+                    <button type="button" class="active" id="lobby-type-solo" onclick="setCreateLobbyType('solo')">Solo 2v2</button>
+                    <button type="button" id="lobby-type-duo" onclick="setCreateLobbyType('duo')">Double</button>
+                    <button type="button" id="lobby-type-1v1" onclick="setCreateLobbyType('1v1')">1v1</button>
+                </div>
+                <input type="hidden" id="lobby-match-type" value="solo">
+            </div>
+            <div class="lobby-score-help" style="margin-bottom:12px">En mode double, chaque equipe est occupee par un seul duo de saison.</div>
+            <div id="lobby-create-error" class="error-msg"></div>
+            <button class="btn" onclick="createLobby()">Creer</button>
+            <button class="btn btn-secondary" style="margin-top:8px" onclick="this.closest('.elo-result-overlay').remove()">Annuler</button>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+}
+
+function setCreateLobbyType(type) {
+    ['solo', 'duo', '1v1'].forEach((value) => {
+        const button = document.getElementById(`lobby-type-${value}`);
+        if (button) button.classList.toggle('active', value === type);
+    });
+    document.getElementById('lobby-match-type').value = type;
+}
+
+async function createLobby() {
+    const matchType = document.getElementById('lobby-match-type').value;
+    const errEl = document.getElementById('lobby-create-error');
+    errEl.textContent = '';
+
+    try {
+        const lobby = await api('/lobbies', {
+            method: 'POST',
+            body: JSON.stringify({ match_type: matchType })
+        });
+        document.getElementById('lobby-create-overlay')?.remove();
+        showLobbyView(lobby.id);
+    } catch (err) {
+        errEl.textContent = err.message;
+    }
+}
+
+function showJoinLobby() {
+    const overlay = document.createElement('div');
+    overlay.className = 'elo-result-overlay';
+    overlay.id = 'lobby-join-overlay';
+    overlay.innerHTML = `
+        <div class="elo-result-box">
+            <h2>Rejoindre un lobby</h2>
+            <div class="form-group">
+                <label>Code du lobby</label>
+                <input type="text" id="lobby-join-code" placeholder="Ex: A1B2C3D4" maxlength="8" style="text-transform:uppercase;text-align:center;font-size:20px;letter-spacing:4px">
+            </div>
+            <div id="lobby-join-error" class="error-msg"></div>
+            <button class="btn" onclick="joinLobbyManual()">Rejoindre</button>
+            <button class="btn btn-secondary" style="margin-top:8px" onclick="this.closest('.elo-result-overlay').remove()">Annuler</button>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+}
+
+async function joinLobbyManual() {
+    const code = document.getElementById('lobby-join-code').value.trim().toUpperCase();
+    const errEl = document.getElementById('lobby-join-error');
+    errEl.textContent = '';
+
+    if (!code) {
+        errEl.textContent = 'Entrez un code';
+        return;
+    }
+
+    try {
+        const lobby = await api(`/lobbies/code/${code}`);
+        document.getElementById('lobby-join-overlay')?.remove();
+        showLobbyView(lobby.id);
+    } catch (err) {
+        errEl.textContent = err.message;
+    }
+}
+
+async function joinLobbyByCode(code) {
+    try {
+        const lobby = await api(`/lobbies/code/${code}`);
+        showLobbyView(lobby.id);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+function startLobbyAutoRefresh() {
+    stopLobbyAutoRefresh();
+    lobbyRefreshTimer = setInterval(() => {
+        if (!currentLobby || !document.getElementById('lobby-view-overlay')) {
+            stopLobbyAutoRefresh();
+            return;
+        }
+        refreshLobbyView(true);
+    }, 4000);
+}
+
+function stopLobbyAutoRefresh() {
+    if (lobbyRefreshTimer) {
+        clearInterval(lobbyRefreshTimer);
+        lobbyRefreshTimer = null;
+    }
+}
+
+async function showLobbyView(lobbyId) {
+    currentLobby = lobbyId;
+    stopLobbyAutoRefresh();
+
+    // Remove any existing overlay
+    document.querySelectorAll('#lobby-view-overlay').forEach(e => e.remove());
+
+    const overlay = document.createElement('div');
+    overlay.className = 'elo-result-overlay';
+    overlay.id = 'lobby-view-overlay';
+    overlay.innerHTML = '<div class="elo-result-box"><div class="loading">Chargement...</div></div>';
+    document.body.appendChild(overlay);
+
+    await refreshLobbyView();
+    startLobbyAutoRefresh();
+}
+
+function renderLobbyScorePanel(lobby, me) {
+    const isCreator = lobby.created_by === me.id;
+    const canStart = lobby.status === 'ready' && isCreator;
+
+    if (lobby.status === 'completed') {
+        return `<div class="lobby-score-panel">
+            <div class="lobby-score-title">Match termine</div>
+            <div class="lobby-score-help">Ce lobby a deja servi a enregistrer un match.</div>
+        </div>`;
+    }
+
+    if (lobby.status !== 'ready') {
+        return `<div class="lobby-score-panel">
+            <div class="lobby-score-title">En attente</div>
+            <div class="lobby-score-help">${lobby.match_type === 'duo'
+                ? 'Les duos rejoignent encore leur equipe. Le match pourra etre lance quand les deux equipes seront remplies.'
+                : 'Les joueurs choisissent encore leur role. Le match pourra etre lance quand tous les slots seront remplis.'}</div>
+        </div>`;
+    }
+
+    if (!isCreator) {
+        return `<div class="lobby-score-panel">
+            <div class="lobby-score-title">Lobby pret</div>
+            <div class="lobby-score-help">Le createur du lobby peut maintenant saisir le score et lancer l'enregistrement du match.</div>
+        </div>`;
+    }
+
+    return `<form class="lobby-score-panel" onsubmit="lobbyStartMatch(event)">
+        <div class="lobby-score-title">Enregistrer le score</div>
+        <div class="score-input lobby-score-inputs">
+            <input type="number" id="lobby-score1" min="0" max="20" value="0" inputmode="numeric">
+            <span class="score-vs">VS</span>
+            <input type="number" id="lobby-score2" min="0" max="20" value="0" inputmode="numeric">
+        </div>
+        <div class="lobby-score-help">${lobby.match_type === 'duo'
+            ? 'Ce score sera enregistre comme match double avec un duo de saison par equipe.'
+            : 'Ce score utilisera le nouveau mode lobby sans enlever l\'ancien enregistrement manuel.'}</div>
+        <div id="lobby-score-error" class="error-msg"></div>
+        ${canStart ? `<button type="submit" class="btn">Lancer le match</button>` : ''}
+    </form>`;
+}
+
+async function refreshLobbyView(isSilent) {
+    if (!currentLobby) return;
+    const overlay = document.getElementById('lobby-view-overlay');
+    if (!overlay) return;
+
+    try {
+        const [lobby, qr] = await Promise.all([
+            api(`/lobbies/${currentLobby}`),
+            api(`/lobbies/${currentLobby}/qr`)
+        ]);
+
+        const me = getPlayer();
+        const isSoloLobby = lobby.match_type === 'solo';
+        const isDuoLobby = lobby.match_type === 'duo';
+        const isCreator = lobby.created_by === me.id;
+
+        let slotsHtml = '';
+        if (isSoloLobby) {
+            slotsHtml = `
+                <div class="lobby-teams">
+                    <div class="lobby-team">
+                        <div class="lobby-team-title">Equipe 1</div>
+                        ${renderLobbySlot(lobby, 'slot_t1_attack', 'ATK', lobby.t1_attack_name, lobby.slot_t1_attack, me.id)}
+                        ${renderLobbySlot(lobby, 'slot_t1_defense', 'DEF', lobby.t1_defense_name, lobby.slot_t1_defense, me.id)}
+                    </div>
+                    <div class="lobby-team">
+                        <div class="lobby-team-title">Equipe 2</div>
+                        ${renderLobbySlot(lobby, 'slot_t2_attack', 'ATK', lobby.t2_attack_name, lobby.slot_t2_attack, me.id)}
+                        ${renderLobbySlot(lobby, 'slot_t2_defense', 'DEF', lobby.t2_defense_name, lobby.slot_t2_defense, me.id)}
+                    </div>
+                </div>`;
+        } else if (isDuoLobby) {
+            slotsHtml = `
+                <div class="lobby-teams">
+                    <div class="lobby-team">
+                        <div class="lobby-team-title">Equipe 1</div>
+                        ${renderLobbyDuoSlot(lobby, 'team1', me.id)}
+                    </div>
+                    <div class="lobby-team">
+                        <div class="lobby-team-title">Equipe 2</div>
+                        ${renderLobbyDuoSlot(lobby, 'team2', me.id)}
+                    </div>
+                </div>`;
+        } else {
+            slotsHtml = `
+                <div class="lobby-teams">
+                    ${renderLobbySlot(lobby, 'slot_1v1_p1', 'Joueur 1', lobby.p1_name, lobby.slot_1v1_p1, me.id)}
+                    ${renderLobbySlot(lobby, 'slot_1v1_p2', 'Joueur 2', lobby.p2_name, lobby.slot_1v1_p2, me.id)}
+                </div>`;
+        }
+
+        const box = overlay.querySelector('.elo-result-box');
+        box.innerHTML = `
+            <h2>Lobby ${lobby.match_type === 'solo' ? 'Solo 2v2' : lobby.match_type === 'duo' ? 'Double' : '1v1'}</h2>
+            <div class="lobby-meta">
+                <div style="text-align:center">
+                    <img src="${qr.qr}" class="lobby-qr" alt="QR Code du lobby">
+                    <div style="font-size:24px;font-weight:800;letter-spacing:6px;margin-top:8px;color:var(--gold)">${lobby.code}</div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Scannez le QR code ou entrez le code</div>
+                </div>
+                <div class="lobby-details">
+                    <div class="lobby-status-badge lobby-status-${lobby.status}">${lobby.status === 'ready' ? 'Pret' : lobby.status === 'completed' ? 'Termine' : 'En attente'}</div>
+                    <div class="lobby-score-help">Createur: ${lobby.created_by_name}</div>
+                    <div class="lobby-score-help">${lobby.match_type === 'duo'
+                        ? (isCreator ? 'Vous pouvez fermer le lobby et lancer le match quand les deux duos sont en place.' : 'Rejoignez une equipe avec votre duo de saison puis attendez le createur.')
+                        : (isCreator ? 'Vous pouvez fermer le lobby et lancer le match.' : 'Rejoignez un role puis attendez que le createur valide le score.')}</div>
+                    ${lobby.match_type === 'duo' ? `<div class="lobby-score-help ${lobby.duo_valid ? 'elo-positive' : 'elo-negative'}">${lobby.duo_valid ? 'Chaque equipe contient bien un duo de saison.' : 'Chaque equipe doit etre rejointe par un seul duo de saison.'}</div>` : ''}
+                    <div class="lobby-link-box">${qr.url}</div>
+                </div>
+            </div>
+            ${slotsHtml}
+            ${renderLobbyScorePanel(lobby, me)}
+            <div class="lobby-actions">
+                <button class="btn btn-secondary" onclick="refreshLobbyView()">Rafraichir</button>
+                <button class="btn btn-secondary" onclick="leaveLobby()">Quitter</button>
+                ${isCreator ? `<button class="btn btn-danger" onclick="cancelLobby()">Fermer le lobby</button>` : ''}
+            </div>
+        `;
+    } catch (err) {
+        if (isSilent) return;
+        const box = overlay.querySelector('.elo-result-box');
+        box.innerHTML = `<div class="error-msg">${err.message}</div><button class="btn btn-secondary" style="margin-top:12px" onclick="closeLobbyView()">Fermer</button>`;
+    }
+}
+
+function renderLobbySlot(lobby, slotField, label, playerName, playerId, myId) {
+    const taken = playerId !== null;
+    const isMe = playerId === myId;
+
+    if (taken) {
+        return `<div class="lobby-slot taken ${isMe ? 'is-me' : ''}">
+            <span class="lobby-slot-label">${label}</span>
+            <span class="lobby-slot-name">${playerName}</span>
+            ${isMe ? `<span class="lobby-slot-leave" onclick="leaveSlot(${lobby.id})">x</span>` : ''}
+        </div>`;
+    }
+    return `<div class="lobby-slot empty" onclick="joinSlot(${lobby.id}, '${slotField}')">
+        <span class="lobby-slot-label">${label}</span>
+        <span class="lobby-slot-name" style="color:var(--text-muted)">Libre - Cliquez pour rejoindre</span>
+    </div>`;
+}
+
+function renderLobbyDuoSlot(lobby, teamKey, myId) {
+    const isTeam1 = teamKey === 'team1';
+    const duo = isTeam1 ? lobby.duo_team1 : lobby.duo_team2;
+    const attackName = isTeam1 ? lobby.t1_attack_name : lobby.t2_attack_name;
+    const defenseName = isTeam1 ? lobby.t1_defense_name : lobby.t2_defense_name;
+    const attackId = isTeam1 ? lobby.slot_t1_attack : lobby.slot_t2_attack;
+    const defenseId = isTeam1 ? lobby.slot_t1_defense : lobby.slot_t2_defense;
+    const taken = attackId !== null || defenseId !== null;
+    const isMe = attackId === myId || defenseId === myId;
+
+    if (taken) {
+        const duoTitle = duo?.duo_name || ((attackName && defenseName) ? `${attackName} & ${defenseName}` : 'Duo incomplet');
+        const duoPlayers = attackName && defenseName
+            ? `${attackName} (ATK) & ${defenseName} (DEF)`
+            : 'Composition en attente';
+
+        return `<div class="lobby-slot taken ${isMe ? 'is-me' : ''}">
+            <span class="lobby-slot-label">Duo</span>
+            <span class="lobby-slot-name" style="display:block">
+                <span style="display:block">${duoTitle}</span>
+                <small style="display:block;color:var(--text-muted);margin-top:2px">${duoPlayers}</small>
+                ${duo ? '' : '<small style="display:block;color:var(--red);margin-top:4px">Duo non valide</small>'}
+            </span>
+            ${isMe ? `<span class="lobby-slot-leave" onclick="leaveSlot(${lobby.id})">x</span>` : ''}
+        </div>`;
+    }
+
+    return `<div class="lobby-slot empty" onclick="joinSlot(${lobby.id}, '${teamKey}')">
+        <span class="lobby-slot-label">Duo</span>
+        <span class="lobby-slot-name" style="color:var(--text-muted)">Libre - Rejoindre avec mon duo</span>
+    </div>`;
+}
+
+async function joinSlot(lobbyId, slot) {
+    try {
+        await api(`/lobbies/${lobbyId}/join`, {
+            method: 'PUT',
+            body: JSON.stringify({ slot })
+        });
+        await refreshLobbyView();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function leaveSlot(lobbyId) {
+    try {
+        await api(`/lobbies/${lobbyId}/leave`, { method: 'PUT', body: '{}' });
+        await refreshLobbyView();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function leaveLobby() {
+    if (currentLobby) {
+        try { await api(`/lobbies/${currentLobby}/leave`, { method: 'PUT', body: '{}' }); } catch(e) {}
+    }
+    closeLobbyView();
+}
+
+async function cancelLobby() {
+    if (!currentLobby) return;
+    if (!confirm('Fermer ce lobby ?')) return;
+
+    try {
+        await api(`/lobbies/${currentLobby}`, { method: 'DELETE' });
+        closeLobbyView();
+        showToast('Lobby ferme');
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+function closeLobbyView() {
+    stopLobbyAutoRefresh();
+    currentLobby = null;
+    document.getElementById('lobby-view-overlay')?.remove();
+}
+
+async function lobbyStartMatch(e) {
+    if (e) e.preventDefault();
+
+    try {
+        const lobby = await api(`/lobbies/${currentLobby}`);
+        const me = getPlayer();
+        const errEl = document.getElementById('lobby-score-error');
+        if (errEl) errEl.textContent = '';
+
+        if (lobby.created_by !== me.id) {
+            showToast('Seul le createur du lobby peut lancer le match.', 'error');
+            return;
+        }
+        if (lobby.status !== 'ready') {
+            if (errEl) errEl.textContent = 'Le lobby doit etre complet avant de lancer le match.';
+            return;
+        }
+        if (lobby.match_type === 'duo' && !lobby.duo_valid) {
+            if (errEl) errEl.textContent = 'Chaque equipe doit correspondre a un duo de saison valide.';
+            return;
+        }
+
+        const score1 = parseInt(document.getElementById('lobby-score1')?.value || '', 10);
+        const score2 = parseInt(document.getElementById('lobby-score2')?.value || '', 10);
+        if (!Number.isFinite(score1) || !Number.isFinite(score2)) {
+            if (errEl) errEl.textContent = 'Entrez un score valide.';
+            return;
+        }
+        if (score1 === score2) {
+            if (errEl) errEl.textContent = 'Pas de match nul !';
+            return;
+        }
+
+        if (lobby.match_type === '1v1') {
+            await api('/matches/1v1', {
+                method: 'POST',
+                body: JSON.stringify({
+                    player1: lobby.slot_1v1_p1,
+                    player2: lobby.slot_1v1_p2,
+                    score_player1: score1,
+                    score_player2: score2,
+                })
+            });
+        } else {
+            await api('/matches', {
+                method: 'POST',
+                body: JSON.stringify({
+                    team1_attack: lobby.slot_t1_attack,
+                    team1_defense: lobby.slot_t1_defense,
+                    team2_attack: lobby.slot_t2_attack,
+                    team2_defense: lobby.slot_t2_defense,
+                    score_team1: score1,
+                    score_team2: score2,
+                })
+            });
+        }
+
+        await api(`/lobbies/${currentLobby}/complete`, { method: 'PUT', body: '{}' }).catch(() => {});
+        closeLobbyView();
+        showToast('Match enregistre depuis le lobby !');
+    } catch (err) {
+        const errEl = document.getElementById('lobby-score-error');
+        if (errEl) {
+            errEl.textContent = err.message;
+            return;
+        }
+        showToast(err.message, 'error');
+    }
 }
 
 // ===== Rankings =====
@@ -950,17 +1612,62 @@ function renderRankingList(data) {
         return;
     }
 
+    // Build podium for top 3
     let html = '';
+    const top3 = data.slice(0, 3);
+    if (top3.length >= 1) {
+        const podiumLabels = ['1er', '2eme', '3eme'];
+
+        html += '<div class="podium">';
+        for (let i = 0; i < Math.min(3, top3.length); i++) {
+            const r = top3[i];
+            let name;
+            if (rankingType === 'duo') {
+                name = r.duo_name || `${r.player1_name} & ${r.player2_name}`;
+            } else {
+                name = r.display_name;
+            }
+            const colorClass = getRankColorClass(r.rank.name);
+            const podiumClickAttr = rankingType !== 'duo' ? `onclick="showPlayerProfile(${r.player_id})"` : '';
+            const visual = rankingType === 'duo'
+                ? renderRankIcon(r.rank.name, 68, 'podium-rank-icon')
+                : `<div class="podium-avatar-stack">
+                    ${avatarHtml(r.profile_photo, 42)}
+                    ${renderRankIcon(r.rank.name, 68, 'podium-rank-icon')}
+                </div>`;
+
+            html += `<div class="podium-item podium-${i + 1}" ${podiumClickAttr}>
+                <div class="podium-medal">${podiumLabels[i]}</div>
+                <div class="podium-visual">${visual}</div>
+                <div class="podium-name">${name}</div>
+                <div class="podium-elo rank-${colorClass}">${r.elo}</div>
+                <div class="rank-badge badge-${colorClass}">${r.rank.name}</div>
+            </div>`;
+        }
+        html += '</div>';
+    }
+
     for (const r of data) {
         const posClass = r.position <= 3 ? `top${r.position}` : '';
+        const topClass = r.position <= 3 ? ` ranking-top ranking-top-${r.position}` : '';
+        const clickAttr = rankingType !== 'duo' ? `onclick="showPlayerProfile(${r.player_id})" style="cursor:pointer"` : '';
+        const playerIdentity = rankingType === 'duo'
+            ? ''
+            : `<div class="ranking-player-visual">
+                ${avatarHtml(r.profile_photo, 38)}
+                ${renderRankIcon(r.rank.name, 48, 'ranking-rank-icon')}
+            </div>`;
 
         if (rankingType === 'global') {
             const colorClass = getRankColorClass(r.rank.name);
-            html += `<div class="ranking-item">
+            const total = (r.wins || 0) + (r.losses || 0);
+            const wr = total > 0 ? Math.round(((r.wins || 0) / total) * 100) + '%' : '-';
+            html += `<div class="ranking-item${topClass}" ${clickAttr}>
                 <div class="ranking-pos ${posClass}">#${r.position}</div>
+                ${playerIdentity}
                 <div class="ranking-info">
                     <div class="ranking-name">${r.display_name}</div>
-                    <div class="ranking-record">ATK ${r.elo_attack} | DEF ${r.elo_defense} | 1v1 ${r.elo_1v1}</div>
+                    <div class="ranking-record">ATK ${r.elo_attack} | DEF ${r.elo_defense} | 1v1 ${r.elo_1v1} | WR: ${wr}</div>
                 </div>
                 <div class="ranking-elo">
                     <div class="elo-value rank-${colorClass}">${r.elo}</div>
@@ -980,8 +1687,9 @@ function renderRankingList(data) {
                 name = r.display_name;
             }
 
-            html += `<div class="ranking-item">
+            html += `<div class="ranking-item${topClass}" ${clickAttr}>
                 <div class="ranking-pos ${posClass}">#${r.position}</div>
+                ${playerIdentity}
                 <div class="ranking-info">
                     <div class="ranking-name">${name}</div>
                     <div class="ranking-record">${r.wins}V ${r.losses}D | WR: ${wr}</div>
@@ -1037,15 +1745,79 @@ async function loadHistory(page) {
     }
 }
 
+// ===== Rules =====
+async function loadRules() {
+    const container = document.getElementById('rules-content');
+    container.innerHTML = '<div class="loading">Chargement...</div>';
+
+    try {
+        const rules = await api('/rules');
+        const player = getPlayer();
+
+        let html = `<div class="section-title">Reglement du baby-foot</div>`;
+
+        if (rules) {
+            html += `<div class="card rules-card">
+                <div style="white-space:pre-wrap;line-height:1.6">${escapeHtml(rules.content)}</div>
+                <div style="margin-top:12px;font-size:11px;color:var(--text-muted)">Mis a jour par ${rules.updated_by_name} le ${formatDate(rules.updated_at)}</div>
+            </div>`;
+        } else {
+            html += '<div class="empty-state">Aucun reglement defini pour le moment.</div>';
+        }
+
+        if (player?.is_admin) {
+            html += `<div class="card" style="margin-top:16px">
+                <div class="card-title">Modifier le reglement (admin)</div>
+                <form onsubmit="saveRules(event)">
+                    <div class="form-group">
+                        <textarea id="rules-editor" rows="12" style="width:100%;padding:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;color:#fff;font-size:14px;resize:vertical;font-family:inherit">${rules ? escapeHtml(rules.content) : ''}</textarea>
+                    </div>
+                    <div id="rules-error" class="error-msg"></div>
+                    <button type="submit" class="btn">Sauvegarder</button>
+                </form>
+            </div>`;
+        }
+
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = `<div class="empty-state">${err.message}</div>`;
+    }
+}
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+async function saveRules(e) {
+    e.preventDefault();
+    const content = document.getElementById('rules-editor').value;
+    const errEl = document.getElementById('rules-error');
+    errEl.textContent = '';
+
+    try {
+        await api('/rules', {
+            method: 'PUT',
+            body: JSON.stringify({ content })
+        });
+        showToast('Reglement mis a jour');
+        loadRules();
+    } catch (err) {
+        errEl.textContent = err.message;
+    }
+}
+
 // ===== Profile =====
 async function loadProfile() {
     const container = document.getElementById('profile-content');
     try {
         const player = getPlayer();
-        const [duo, players, me] = await Promise.all([
+        const [duo, players, me, stats] = await Promise.all([
             api('/duos/mine'),
             api('/players'),
-            api('/auth/me')
+            api('/auth/me'),
+            api(`/players/${player.id}/stats`)
         ]);
 
         // Refresh player data from server
@@ -1054,9 +1826,41 @@ async function loadProfile() {
 
         let html = `<div class="card">
             <div class="card-title">Mon profil</div>
-            <div style="font-size:18px;font-weight:700;margin-bottom:4px">${me.display_name}</div>
-            <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px">ID: ${me.id}</div>
-            <form onsubmit="changeDisplayName(event)" style="display:flex;gap:8px;align-items:flex-end">
+            <div class="profile-hero">
+                <div style="position:relative">
+                    ${avatarHtml(me.profile_photo, 72)}
+                    <label for="photo-upload" style="position:absolute;bottom:-4px;right:-4px;background:var(--accent);width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;border:2px solid var(--bg-primary)">+</label>
+                    <input type="file" id="photo-upload" accept="image/*" style="display:none" onchange="uploadProfilePhoto(this)">
+                </div>
+                <div class="profile-hero-copy">
+                    <div style="font-size:20px;font-weight:800">${me.display_name}</div>
+                    ${me.identifier ? `<div class="player-profile-identifier">@${me.identifier}</div>` : ''}
+                    <div style="font-size:13px;color:var(--text-muted)">Compte #${me.id}</div>
+                </div>
+            </div>`;
+
+        // Ranks display
+        if (stats?.ratings) {
+            const r = stats.ratings;
+            html += renderGlobalRankBanner(r, stats.global_rank, stats.total_players);
+
+            html += `<div class="section-title">Mes rangs</div>
+            <div class="stats-grid stats-grid-4" style="margin-bottom:12px">
+                ${renderStatBox('ATK', r.elo_attack, r.wins_attack, r.losses_attack)}
+                ${renderStatBox('DEF', r.elo_defense, r.wins_defense, r.losses_defense)}
+                ${renderStatBox('DUO', r.elo_duo, r.wins_duo, r.losses_duo)}
+                ${renderStatBox('1v1', r.elo_1v1, r.wins_1v1, r.losses_1v1)}
+            </div>`;
+
+            // Streak info
+            if (r.current_win_streak > 0) {
+                html += `<div class="streak-banner streak-win">Serie de victoires : ${r.current_win_streak}</div>`;
+            } else if (r.current_loss_streak > 0) {
+                html += `<div class="streak-banner streak-loss">Serie de defaites : ${r.current_loss_streak}</div>`;
+            }
+        }
+
+        html += `<form onsubmit="changeDisplayName(event)" style="display:flex;gap:8px;align-items:flex-end">
                 <div class="form-group" style="flex:1;margin-bottom:0">
                     <label>Changer de pseudo</label>
                     <input type="text" id="new-display-name" placeholder="Nouveau pseudo" value="${me.display_name}" maxlength="30">
@@ -1096,6 +1900,23 @@ async function loadProfile() {
         container.innerHTML = html;
     } catch (err) {
         container.innerHTML = `<div class="empty-state">${err.message}</div>`;
+    }
+}
+
+async function uploadProfilePhoto(input) {
+    if (!input.files || !input.files[0]) return;
+
+    const formData = new FormData();
+    formData.append('photo', input.files[0]);
+
+    try {
+        const result = await apiUpload('/auth/profile-photo', formData);
+        setPlayer(result.player);
+        syncPlayerCaches(result.player);
+        showToast('Photo mise a jour');
+        loadProfile();
+    } catch (err) {
+        showToast(err.message, 'error');
     }
 }
 
@@ -1142,6 +1963,92 @@ async function createDuo(e) {
 }
 
 // ===== Admin =====
+let adminPlayersCache = [];
+let adminSqlLastResult = null;
+let adminSqlLastQuery = 'SELECT id, identifier, display_name, is_admin FROM players ORDER BY id DESC LIMIT 20;';
+
+function escapeForHtml(value) {
+    return escapeHtml(String(value));
+}
+
+function renderAdminSqlResult(result) {
+    const container = document.getElementById('admin-sql-result');
+    if (!container) return;
+
+    if (!result) {
+        container.innerHTML = '<div class="empty-state" style="padding:12px">Aucun resultat</div>';
+        return;
+    }
+
+    if (result.kind === 'rows') {
+        const columns = result.columns || [];
+        const rows = result.rows || [];
+
+        if (rows.length === 0) {
+            container.innerHTML = '<div class="empty-state" style="padding:12px">Requete executee, aucune ligne retournee</div>';
+            return;
+        }
+
+        const headerHtml = columns.map((column) => `<th>${escapeForHtml(column)}</th>`).join('');
+        const rowsHtml = rows.map((row) => `
+            <tr>${columns.map((column) => `<td>${escapeForHtml(row[column] ?? '')}</td>`).join('')}</tr>
+        `).join('');
+
+        container.innerHTML = `
+            <div class="sql-result-meta">
+                ${result.row_count} ligne(s) retournee(s)${result.truncated ? ' - affiche limite a 200 lignes' : ''}
+            </div>
+            <div class="sql-table-wrap">
+                <table class="sql-result-table">
+                    <thead><tr>${headerHtml}</tr></thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = `
+        <div class="sql-result-meta">Requete de modification executee</div>
+        <pre class="sql-result-json">${escapeForHtml(JSON.stringify(result, null, 2))}</pre>
+    `;
+}
+
+function renderAdminPlayersList(query) {
+    const container = document.getElementById('admin-players-list');
+    if (!container) return;
+
+    const q = (query || '').toLowerCase().trim();
+    const players = adminPlayersCache.filter((player) => {
+        if (!q) return true;
+        return player.display_name.toLowerCase().includes(q) || player.identifier.toLowerCase().includes(q);
+    });
+
+    if (players.length === 0) {
+        container.innerHTML = '<div class="empty-state" style="padding:12px">Aucun joueur</div>';
+        return;
+    }
+
+    container.innerHTML = players.map((p) => `
+        <div class="player-list-item">
+            <div class="player-list-head">
+                ${avatarHtml(p.profile_photo, 42)}
+                <div>
+                    <span class="name">${p.display_name}</span>
+                    ${p.is_admin ? '<span class="admin-badge">Admin</span>' : ''}
+                    <div class="id-badge">@${p.identifier}</div>
+                </div>
+            </div>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">
+                <button class="btn btn-small btn-secondary" onclick="toggleAdmin(${p.id}, ${p.is_admin ? 0 : 1})">${p.is_admin ? 'Retirer admin' : 'Promouvoir'}</button>
+                <button class="btn btn-small btn-secondary" onclick="resetPassword(${p.id})">Reset MDP</button>
+                <button class="btn btn-small" onclick="showEditElo(${p.id}, '${p.display_name.replace(/'/g, "\\'")}')">Modifier ELO</button>
+                <button class="btn btn-small btn-danger" onclick="deletePlayer(${p.id}, '${p.display_name.replace(/'/g, "\\'")}')">Supprimer</button>
+            </div>
+        </div>
+    `).join('');
+}
+
 async function loadAdmin() {
     const container = document.getElementById('admin-content');
     const player = getPlayer();
@@ -1160,14 +2067,35 @@ async function loadAdmin() {
         ]);
 
         let html = '';
+        adminPlayersCache = players;
 
         // Stats
         html += `<div class="admin-section">
-            <h2>Dashboard</h2>
+            <h2>Console Administrateur</h2>
             <div class="stats-grid">
                 <div class="stat-box"><div class="label">Joueurs</div><div class="value">${stats.total_players}</div></div>
                 <div class="stat-box"><div class="label">Matchs</div><div class="value">${stats.matches_this_season}</div></div>
                 <div class="stat-box"><div class="label">Duos</div><div class="value">${stats.duos_this_season}</div></div>
+            </div>
+        </div>`;
+
+        html += `<div class="admin-section">
+            <h2>Console SQL</h2>
+            <div class="card">
+                <div class="card-title">Executer une requete SQL sur la base</div>
+                <form onsubmit="executeAdminSql(event)">
+                    <div class="form-group">
+                        <label>Requete SQL</label>
+                        <textarea id="admin-sql-input" rows="8" class="admin-sql-input" spellcheck="false">${escapeForHtml(adminSqlLastQuery)}</textarea>
+                    </div>
+                    <div id="admin-sql-error" class="error-msg"></div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                        <button type="submit" class="btn btn-small">Executer</button>
+                        <button type="button" class="btn btn-small btn-secondary" onclick="document.getElementById('admin-sql-input').value='SELECT * FROM players LIMIT 20;'">Exemple SELECT</button>
+                        <button type="button" class="btn btn-small btn-secondary" onclick="document.getElementById('admin-sql-input').value='UPDATE players SET is_admin = 0 WHERE id = 999999;'">Exemple UPDATE</button>
+                    </div>
+                </form>
+                <div id="admin-sql-result" style="margin-top:14px"></div>
             </div>
         </div>`;
 
@@ -1181,8 +2109,13 @@ async function loadAdmin() {
                 <div class="form-group"><label>Score Mult</label><input id="new-score" type="number" step="0.01" value="0.1"></div>
                 <div class="form-group"><label>Equipes / Duo</label><input id="new-duo-rank" type="number" step="0.01" value="1.3"></div>
                 <div class="form-group"><label>Coeff defaite</label><input id="new-loss" type="number" step="0.01" min="0" value="1"></div>
+                <div class="form-group"><label>Serie victoire</label><input id="new-win-streak" type="number" step="0.01" min="0" value="0.05"></div>
+                <div class="form-group"><label>Serie defaite</label><input id="new-loss-streak" type="number" step="0.01" min="0" value="0.05"></div>
             </div>
-            ${renderCoeffHelp()}
+            ${renderCoeffHelp({
+                win_streak_multiplier: 0.05,
+                loss_streak_multiplier: 0.05
+            })}
             <button type="submit" class="btn btn-small">Creer la saison</button>
         </form>`;
 
@@ -1191,7 +2124,7 @@ async function loadAdmin() {
             html += `<div class="card" style="display:flex;justify-content:space-between;align-items:center">
                 <div>
                     <strong>${s.name}</strong> ${s.is_active ? '<span class="admin-badge">Active</span>' : ''}
-                    <div style="font-size:11px;color:var(--text-muted)">K:${s.base_k_factor} | Duel:${s.rank_multiplier} | Score:${s.score_multiplier} | Equipes/Duo:${s.duo_rank_multiplier} | Defaite:${lossPercent}%</div>
+                    <div style="font-size:11px;color:var(--text-muted)">K:${s.base_k_factor} | Duel:${s.rank_multiplier} | Score:${s.score_multiplier} | Equipes/Duo:${s.duo_rank_multiplier} | Defaite:${lossPercent}% | Serie V:+${getStreakStepPercent(s, 'win')}% | Serie D:+${getStreakStepPercent(s, 'loss')}%</div>
                 </div>
                 <div>
                     ${!s.is_active ? `<button class="btn btn-small" onclick="activateSeason(${s.id})">Activer</button>` : ''}
@@ -1213,8 +2146,10 @@ async function loadAdmin() {
                         <div class="form-group"><label>Score Mult</label><input id="edit-score" type="number" step="0.01" value="${as.score_multiplier}"></div>
                         <div class="form-group"><label>Equipes / Duo</label><input id="edit-duo-rank" type="number" step="0.01" value="${as.duo_rank_multiplier}"></div>
                         <div class="form-group"><label>Coeff defaite</label><input id="edit-loss" type="number" step="0.01" min="0" value="${as.loss_multiplier ?? 1}"></div>
+                        <div class="form-group"><label>Serie victoire</label><input id="edit-win-streak" type="number" step="0.01" min="0" value="${as.win_streak_multiplier ?? 0.05}"></div>
+                        <div class="form-group"><label>Serie defaite</label><input id="edit-loss-streak" type="number" step="0.01" min="0" value="${as.loss_streak_multiplier ?? 0.05}"></div>
                     </div>
-                    ${renderCoeffHelp()}
+                    ${renderCoeffHelp(as)}
                     <button type="submit" class="btn btn-small">Sauvegarder</button>
                 </form>
             </div>`;
@@ -1243,23 +2178,10 @@ async function loadAdmin() {
         html += `</div>`;
 
         // Joueurs (avec modification ELO et suppression)
-        html += `<div class="admin-section"><h2>Joueurs</h2>`;
-        for (const p of players) {
-            html += `<div class="player-list-item">
-                <div>
-                    <span class="name">${p.display_name}</span>
-                    ${p.is_admin ? '<span class="admin-badge">Admin</span>' : ''}
-                    <div class="id-badge">${p.identifier}</div>
-                </div>
-                <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">
-                    <button class="btn btn-small btn-secondary" onclick="toggleAdmin(${p.id}, ${p.is_admin ? 0 : 1})">${p.is_admin ? 'Retirer admin' : 'Promouvoir'}</button>
-                    <button class="btn btn-small btn-secondary" onclick="resetPassword(${p.id})">Reset MDP</button>
-                    <button class="btn btn-small" onclick="showEditElo(${p.id}, '${p.display_name.replace(/'/g, "\\'")}')">Modifier ELO</button>
-                    <button class="btn btn-small btn-danger" onclick="deletePlayer(${p.id}, '${p.display_name.replace(/'/g, "\\'")}')">Supprimer</button>
-                </div>
-            </div>`;
-        }
-        html += `</div>`;
+        html += `<div class="admin-section"><h2>Joueurs</h2>
+            <input type="text" class="search-input" placeholder="Rechercher un joueur ou un identifiant..." oninput="renderAdminPlayersList(this.value)">
+            <div id="admin-players-list"></div>
+        </div>`;
 
         // Duos (avec suppression)
         html += `<div class="admin-section"><h2>Duos</h2>`;
@@ -1280,8 +2202,32 @@ async function loadAdmin() {
         html += `<div id="admin-msg" class="success-msg"></div>`;
 
         container.innerHTML = html;
+        renderAdminPlayersList();
+        renderAdminSqlResult(adminSqlLastResult);
     } catch (err) {
         container.innerHTML = `<div class="empty-state">${err.message}</div>`;
+    }
+}
+
+async function executeAdminSql(e) {
+    e.preventDefault();
+    const sql = document.getElementById('admin-sql-input')?.value || '';
+    const errEl = document.getElementById('admin-sql-error');
+    if (errEl) errEl.textContent = '';
+    adminSqlLastQuery = sql;
+
+    try {
+        adminSqlLastResult = await api('/admin/sql', {
+            method: 'POST',
+            body: JSON.stringify({ sql })
+        });
+        if (adminSqlLastResult.kind === 'mutation') {
+            await loadAdmin();
+        }
+        renderAdminSqlResult(adminSqlLastResult);
+        showToast('Requete SQL executee');
+    } catch (err) {
+        if (errEl) errEl.textContent = err.message;
     }
 }
 
@@ -1296,7 +2242,9 @@ async function createSeason(e) {
                 rank_multiplier: parseFloat(document.getElementById('new-rank').value),
                 score_multiplier: parseFloat(document.getElementById('new-score').value),
                 duo_rank_multiplier: parseFloat(document.getElementById('new-duo-rank').value),
-                loss_multiplier: parseFloat(document.getElementById('new-loss').value)
+                loss_multiplier: parseFloat(document.getElementById('new-loss').value),
+                win_streak_multiplier: parseFloat(document.getElementById('new-win-streak').value),
+                loss_streak_multiplier: parseFloat(document.getElementById('new-loss-streak').value)
             })
         });
         await loadAdmin();
@@ -1334,7 +2282,9 @@ async function updateCoeffs(e, id) {
                 rank_multiplier: parseFloat(document.getElementById('edit-rank').value),
                 score_multiplier: parseFloat(document.getElementById('edit-score').value),
                 duo_rank_multiplier: parseFloat(document.getElementById('edit-duo-rank').value),
-                loss_multiplier: parseFloat(document.getElementById('edit-loss').value)
+                loss_multiplier: parseFloat(document.getElementById('edit-loss').value),
+                win_streak_multiplier: parseFloat(document.getElementById('edit-win-streak').value),
+                loss_streak_multiplier: parseFloat(document.getElementById('edit-loss-streak').value)
             })
         });
         await loadAdmin();
@@ -1604,12 +2554,10 @@ async function viewTournament(id) {
 
         // Registration phase
         if (t.status === 'registration') {
-            // Check if user is registered
             let isRegistered = false;
             if (t.tournament_type === 'simple') {
                 isRegistered = participants.some(p => p.player_id === player.id);
             } else {
-                // Check if user's duo is registered
                 isRegistered = participants.some(p => p.player1_id === player.id || p.player2_id === player.id);
             }
 
@@ -1624,14 +2572,12 @@ async function viewTournament(id) {
                         <button class="btn" onclick="registerTournament(${t.id})">S'inscrire</button>
                     </div>`;
                 } else {
-                    // Need to select duo
                     html += `<div class="card" id="tournament-register-duo">`;
                     html += await renderDuoRegistration(t);
                     html += `</div>`;
                 }
             }
 
-            // Admin: start tournament button
             if (player?.is_admin && participants.length >= 2) {
                 html += `<div class="card">
                     <button class="btn" onclick="startTournament(${t.id})">Lancer le tournoi (${participants.length} participants)</button>
@@ -1639,7 +2585,6 @@ async function viewTournament(id) {
             }
         }
 
-        // Admin: cancel button
         if (player?.is_admin && t.status !== 'completed' && t.status !== 'cancelled') {
             html += `<button class="btn btn-small btn-danger" onclick="cancelTournament(${t.id})" style="margin-bottom:12px">Annuler le tournoi</button>`;
         }
@@ -1702,13 +2647,11 @@ async function renderDuoRegistration(tournament) {
 }
 
 function renderBracket(tournament, participants, matches, player) {
-    // Build participant lookup
     const partMap = {};
     for (const p of participants) {
         partMap[p.id] = p;
     }
 
-    // Group matches by round
     const rounds = {};
     let maxRound = 0;
     for (const m of matches) {
@@ -1763,7 +2706,6 @@ function renderBracket(tournament, participants, matches, player) {
         html += `</div>`;
     }
 
-    // Show winner
     if (tournament.status === 'completed') {
         const finalMatch = (rounds[maxRound] || [])[0];
         if (finalMatch && finalMatch.winner_participant_id) {
@@ -1908,3 +2850,5 @@ document.addEventListener('DOMContentLoaded', () => {
         showLogin();
     }
 });
+
+

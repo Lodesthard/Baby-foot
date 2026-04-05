@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../config/db');
 const { authenticateToken } = require('../middleware/auth');
+const { didPlayerWinMatch } = require('../utils/streaks');
 
 const router = express.Router();
 
@@ -8,7 +9,27 @@ const router = express.Router();
 router.get('/', authenticateToken, async (req, res) => {
     try {
         const [rows] = await pool.query(
-            'SELECT id, display_name FROM players ORDER BY display_name'
+            'SELECT id, identifier, display_name, profile_photo FROM players ORDER BY display_name'
+        );
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Search players
+router.get('/search', authenticateToken, async (req, res) => {
+    try {
+        const q = (req.query.q || '').trim();
+        if (q.length < 1) return res.json([]);
+
+        const [rows] = await pool.query(
+            `SELECT id, identifier, display_name, profile_photo
+             FROM players
+             WHERE display_name LIKE ? OR identifier LIKE ?
+             ORDER BY display_name
+             LIMIT 20`,
+            [`%${q}%`, `%${q}%`]
         );
         res.json(rows);
     } catch (err) {
@@ -36,14 +57,78 @@ router.get('/:id/stats', authenticateToken, async (req, res) => {
             [req.params.id, req.params.id, season[0].id]
         );
 
-        const [player] = await pool.query('SELECT id, display_name FROM players WHERE id = ?', [req.params.id]);
+        const [player] = await pool.query(
+            'SELECT id, identifier, display_name, profile_photo FROM players WHERE id = ?',
+            [req.params.id]
+        );
+
+        // Compute global rank position
+        let globalRank = null;
+        if (ratings[0]) {
+            const [allRatings] = await pool.query(
+                `SELECT player_id, (elo_attack + elo_defense + elo_1v1) as total_elo
+                 FROM player_ratings WHERE season_id = ?
+                 ORDER BY total_elo DESC`,
+                [season[0].id]
+            );
+            const pos = allRatings.findIndex(r => r.player_id === parseInt(req.params.id));
+            globalRank = pos >= 0 ? pos + 1 : null;
+        }
 
         res.json({
             player: player[0] || null,
             ratings: ratings[0] || null,
             duo: duo[0] || null,
-            season_id: season[0].id
+            season_id: season[0].id,
+            global_rank: globalRank,
+            total_players: (await pool.query('SELECT COUNT(*) as c FROM player_ratings WHERE season_id = ?', [season[0].id]))[0][0].c
         });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Head-to-head winrate between two players
+router.get('/:id/vs/:opponentId', authenticateToken, async (req, res) => {
+    try {
+        const myId = parseInt(req.params.id);
+        const oppId = parseInt(req.params.opponentId);
+
+        const [matches] = await pool.query(
+            `SELECT id, match_type, season_id, team1_attack, team1_defense, team2_attack, team2_defense, score_team1, score_team2, played_at
+             FROM matches
+             WHERE is_cancelled = 0
+               AND (
+                    (
+                        (team1_attack = ? OR team1_defense = ?)
+                        AND (team2_attack = ? OR team2_defense = ?)
+                    )
+                    OR
+                    (
+                        (team1_attack = ? OR team1_defense = ?)
+                        AND (team2_attack = ? OR team2_defense = ?)
+                    )
+               )
+             ORDER BY played_at DESC, id DESC`,
+            [myId, myId, oppId, oppId, oppId, oppId, myId, myId]
+        );
+
+        let wins = 0;
+        let losses = 0;
+        for (const m of matches) {
+            const didWin = didPlayerWinMatch(m, myId);
+            if (didWin === true) {
+                wins++;
+            } else if (didWin === false) {
+                losses++;
+            }
+        }
+
+        const total = wins + losses;
+        const winrate = total > 0 ? Math.round((wins / total) * 100) : 0;
+
+        res.json({ wins, losses, total, winrate });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Erreur serveur' });
