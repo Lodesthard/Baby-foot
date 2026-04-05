@@ -47,3 +47,25 @@ async function api(path, options = {}) {
     if (!res.ok) throw new Error(data.error || 'Erreur');
     return data;
 }
+
+// File upload helper (no Content-Type header — browser sets multipart boundary)
+async function apiUpload(path, formData) {
+    const token = getToken();
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(API_BASE + path, {
+        method: 'POST',
+        headers,
+        body: formData,
+    });
+
+    const data = await res.json();
+    if ((res.status === 401 || res.status === 403) && !path.startsWith('/auth/')) {
+        clearToken();
+        showLogin();
+        throw new Error('Session expirée');
+    }
+    if (!res.ok) throw new Error(data.error || 'Erreur');
+    return data;
+}

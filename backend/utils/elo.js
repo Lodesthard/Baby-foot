@@ -58,6 +58,11 @@ function getLossMultiplier(value) {
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : 1;
 }
 
+function getStreakStepMultiplier(value, fallback = 0.05) {
+    const parsed = parseFloat(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 function getTierGapMultiplier(tierA, tierB, multiplierValue) {
     const multiplier = getParsedMultiplier(multiplierValue, 1);
     const tierGap = Math.abs(tierA - tierB);
@@ -69,7 +74,14 @@ function getScoreBonus(scoreWinner, scoreLoser, scoreMultiplierValue) {
     return 1 + (scoreWinner - scoreLoser) * scoreMultiplier;
 }
 
-function calculateRoleDelta(playerElo, opponentElo, ownTeamCumulativeElo, opponentTeamCumulativeElo, didWin, scoreWinner, scoreLoser, seasonConfig) {
+// Streak coefficient: longer streaks give bigger bonus/penalty.
+// The step comes from season config and is capped at 5 stacks.
+function getStreakMultiplier(streak, stepMultiplierValue) {
+    const s = Math.min(Math.abs(streak), 5);
+    return 1 + s * getStreakStepMultiplier(stepMultiplierValue);
+}
+
+function calculateRoleDelta(playerElo, opponentElo, ownTeamCumulativeElo, opponentTeamCumulativeElo, didWin, scoreWinner, scoreLoser, seasonConfig, streakCount) {
     const baseKFactor = getParsedMultiplier(seasonConfig.base_k_factor, 32);
     const lossMultiplier = getLossMultiplier(seasonConfig.loss_multiplier);
     const expectedScore = getExpectedScore(playerElo, opponentElo);
@@ -84,6 +96,10 @@ function calculateRoleDelta(playerElo, opponentElo, ownTeamCumulativeElo, oppone
         seasonConfig.duo_rank_multiplier
     );
     const scoreBonus = getScoreBonus(scoreWinner, scoreLoser, seasonConfig.score_multiplier);
+    const streakMultiplier = getStreakMultiplier(
+        streakCount || 0,
+        didWin ? seasonConfig.win_streak_multiplier : seasonConfig.loss_streak_multiplier
+    );
 
     const baseDelta = didWin
         ? baseKFactor * (1 - expectedScore)
@@ -94,12 +110,13 @@ function calculateRoleDelta(playerElo, opponentElo, ownTeamCumulativeElo, oppone
         * directOpponentBonus
         * cumulativeTeamsBonus
         * scoreBonus
+        * streakMultiplier
         * (didWin ? 1 : lossMultiplier)
     );
     return didWin ? totalDelta : -totalDelta;
 }
 
-function calculateMatchElo(match, ratings, seasonConfig) {
+function calculateMatchElo(match, ratings, seasonConfig, streaks) {
     const { score_team1, score_team2 } = match;
     const team1Wins = score_team1 > score_team2;
     const scoreWinner = team1Wins ? score_team1 : score_team2;
@@ -113,6 +130,9 @@ function calculateMatchElo(match, ratings, seasonConfig) {
     const team1CumulativeElo = t1a.elo_attack + t1d.elo_defense;
     const team2CumulativeElo = t2a.elo_attack + t2d.elo_defense;
 
+    // Get streak counts for each player
+    const s = streaks || {};
+
     return {
         // Attaquants : l'opposition directe se fait contre le defenseur adverse.
         elo_change_t1_attack: calculateRoleDelta(
@@ -123,7 +143,8 @@ function calculateMatchElo(match, ratings, seasonConfig) {
             team1Wins,
             scoreWinner,
             scoreLoser,
-            seasonConfig
+            seasonConfig,
+            team1Wins ? (s.t1_attack_win || 0) : (s.t1_attack_loss || 0)
         ),
         elo_change_t2_attack: calculateRoleDelta(
             t2a.elo_attack,
@@ -133,7 +154,8 @@ function calculateMatchElo(match, ratings, seasonConfig) {
             !team1Wins,
             scoreWinner,
             scoreLoser,
-            seasonConfig
+            seasonConfig,
+            !team1Wins ? (s.t2_attack_win || 0) : (s.t2_attack_loss || 0)
         ),
 
         // Defenseurs : l'opposition directe se fait contre l'attaquant adverse.
@@ -145,7 +167,8 @@ function calculateMatchElo(match, ratings, seasonConfig) {
             team1Wins,
             scoreWinner,
             scoreLoser,
-            seasonConfig
+            seasonConfig,
+            team1Wins ? (s.t1_defense_win || 0) : (s.t1_defense_loss || 0)
         ),
         elo_change_t2_defense: calculateRoleDelta(
             t2d.elo_defense,
@@ -155,12 +178,13 @@ function calculateMatchElo(match, ratings, seasonConfig) {
             !team1Wins,
             scoreWinner,
             scoreLoser,
-            seasonConfig
+            seasonConfig,
+            !team1Wins ? (s.t2_defense_win || 0) : (s.t2_defense_loss || 0)
         ),
     };
 }
 
-function calculateDuoEloDelta(teamDuoElo, opponentDuoElo, didWin, scoreWinner, scoreLoser, seasonConfig) {
+function calculateDuoEloDelta(teamDuoElo, opponentDuoElo, didWin, scoreWinner, scoreLoser, seasonConfig, streakCount) {
     const baseKFactor = getParsedMultiplier(seasonConfig.base_k_factor, 32);
     const lossMultiplier = getLossMultiplier(seasonConfig.loss_multiplier);
     const expectedScore = getExpectedScore(teamDuoElo, opponentDuoElo);
@@ -170,16 +194,30 @@ function calculateDuoEloDelta(teamDuoElo, opponentDuoElo, didWin, scoreWinner, s
         seasonConfig.duo_rank_multiplier
     );
     const scoreBonus = getScoreBonus(scoreWinner, scoreLoser, seasonConfig.score_multiplier);
+    const streakMultiplier = getStreakMultiplier(
+        streakCount || 0,
+        didWin ? seasonConfig.win_streak_multiplier : seasonConfig.loss_streak_multiplier
+    );
 
     const baseDelta = didWin
         ? baseKFactor * (1 - expectedScore)
         : baseKFactor * expectedScore;
 
-    const totalDelta = Math.round(baseDelta * duoRankBonus * scoreBonus * (didWin ? 1 : lossMultiplier));
+    const totalDelta = Math.round(baseDelta * duoRankBonus * scoreBonus * streakMultiplier * (didWin ? 1 : lossMultiplier));
     return didWin ? totalDelta : -totalDelta;
 }
 
-function calculateDuoEloChange(t1AttackDuoElo, t1DefenseDuoElo, t2AttackDuoElo, t2DefenseDuoElo, scoreT1, scoreT2, seasonConfig) {
+function calculateDuoEloChange(
+    t1AttackDuoElo,
+    t1DefenseDuoElo,
+    t2AttackDuoElo,
+    t2DefenseDuoElo,
+    scoreT1,
+    scoreT2,
+    seasonConfig,
+    team1Streak = 0,
+    team2Streak = 0
+) {
     const team1DuoElo = Math.round((t1AttackDuoElo + t1DefenseDuoElo) / 2);
     const team2DuoElo = Math.round((t2AttackDuoElo + t2DefenseDuoElo) / 2);
     const team1Wins = scoreT1 > scoreT2;
@@ -194,7 +232,8 @@ function calculateDuoEloChange(t1AttackDuoElo, t1DefenseDuoElo, t2AttackDuoElo, 
             team1Wins,
             scoreWinner,
             scoreLoser,
-            seasonConfig
+            seasonConfig,
+            team1Streak
         ),
         elo_change_duo_t2: calculateDuoEloDelta(
             team2DuoElo,
@@ -202,12 +241,13 @@ function calculateDuoEloChange(t1AttackDuoElo, t1DefenseDuoElo, t2AttackDuoElo, 
             !team1Wins,
             scoreWinner,
             scoreLoser,
-            seasonConfig
+            seasonConfig,
+            team2Streak
         ),
     };
 }
 
-function calculate1v1EloChange(player1Elo, player2Elo, scoreP1, scoreP2, seasonConfig) {
+function calculate1v1EloChange(player1Elo, player2Elo, scoreP1, scoreP2, seasonConfig, streak1, streak2) {
     const baseKFactor = getParsedMultiplier(seasonConfig.base_k_factor, 32);
     const lossMultiplier = getLossMultiplier(seasonConfig.loss_multiplier);
     const p1Wins = scoreP1 > scoreP2;
@@ -221,19 +261,27 @@ function calculate1v1EloChange(player1Elo, player2Elo, scoreP1, scoreP2, seasonC
         seasonConfig.rank_multiplier
     );
     const scoreBonus = getScoreBonus(scoreWinner, scoreLoser, seasonConfig.score_multiplier);
+    const streak1Mult = getStreakMultiplier(
+        streak1 || 0,
+        p1Wins ? seasonConfig.win_streak_multiplier : seasonConfig.loss_streak_multiplier
+    );
+    const streak2Mult = getStreakMultiplier(
+        streak2 || 0,
+        !p1Wins ? seasonConfig.win_streak_multiplier : seasonConfig.loss_streak_multiplier
+    );
 
     const baseDeltaP1 = p1Wins
         ? baseKFactor * (1 - expectedP1)
         : baseKFactor * expectedP1;
 
-    const totalP1 = Math.round(baseDeltaP1 * rankBonus * scoreBonus * (p1Wins ? 1 : lossMultiplier));
+    const totalP1 = Math.round(baseDeltaP1 * rankBonus * scoreBonus * streak1Mult * (p1Wins ? 1 : lossMultiplier));
 
     const expectedP2 = getExpectedScore(player2Elo, player1Elo);
     const baseDeltaP2 = !p1Wins
         ? baseKFactor * (1 - expectedP2)
         : baseKFactor * expectedP2;
 
-    const totalP2 = Math.round(baseDeltaP2 * rankBonus * scoreBonus * (!p1Wins ? 1 : lossMultiplier));
+    const totalP2 = Math.round(baseDeltaP2 * rankBonus * scoreBonus * streak2Mult * (!p1Wins ? 1 : lossMultiplier));
 
     return {
         elo_change_1v1_t1: p1Wins ? totalP1 : -totalP1,
@@ -241,4 +289,4 @@ function calculate1v1EloChange(player1Elo, player2Elo, scoreP1, scoreP2, seasonC
     };
 }
 
-module.exports = { calculateMatchElo, calculateDuoEloChange, calculate1v1EloChange, getRank, RANKS };
+module.exports = { calculateMatchElo, calculateDuoEloChange, calculate1v1EloChange, getRank, RANKS, getStreakMultiplier };

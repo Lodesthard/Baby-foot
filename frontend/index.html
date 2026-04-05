@@ -67,6 +67,7 @@
             <button data-page="rankings" onclick="navigate('rankings')">Classement</button>
             <button data-page="tournaments" onclick="navigate('tournaments')">Tournois</button>
             <button data-page="history" onclick="navigate('history')">Historique</button>
+            <button data-page="rules" onclick="navigate('rules')">Reglement</button>
             <button data-page="profile" onclick="navigate('profile')">Profil</button>
             <button data-page="admin" onclick="navigate('admin')">Admin</button>
         </nav>
@@ -95,12 +96,22 @@
             <div id="history-content"><div class="loading">Chargement...</div></div>
         </div>
 
+        <div id="page-rules" class="page">
+            <div id="rules-content"><div class="loading">Chargement...</div></div>
+        </div>
+
         <div id="page-profile" class="page">
             <div id="profile-content"><div class="loading">Chargement...</div></div>
         </div>
 
         <div id="page-admin" class="page">
             <div id="admin-content"><div class="loading">Chargement...</div></div>
+        </div>
+
+        <!-- Player profile overlay -->
+        <div id="player-profile-overlay" class="elo-result-overlay" style="display:none">
+            <div class="elo-result-box" style="max-width:500px;text-align:left" id="player-profile-box">
+            </div>
         </div>
     </div>
 

@@ -2,8 +2,15 @@ const express = require('express');
 const pool = require('../config/db');
 const { authenticateToken } = require('../middleware/auth');
 const { calculateMatchElo, calculateDuoEloChange, calculate1v1EloChange } = require('../utils/elo');
+const { getRelevantStreakValue } = require('../utils/streaks');
 
 const router = express.Router();
+
+function getTeamStreak(ratingA, ratingB, didWin) {
+    const streakA = getRelevantStreakValue(ratingA, didWin);
+    const streakB = getRelevantStreakValue(ratingB, didWin);
+    return Math.round((streakA + streakB) / 2);
+}
 
 // Enregistrer un match 2v2 (solo ou duo)
 router.post('/', authenticateToken, async (req, res) => {
@@ -53,6 +60,20 @@ router.post('/', authenticateToken, async (req, res) => {
             t2_defense: await getRating(team2_defense),
         };
 
+        const team1Wins = score_team1 > score_team2;
+
+        // Build streak info for ELO calculation
+        const streaks = {
+            t1_attack_win: team1Wins ? ratings.t1_attack.current_win_streak : 0,
+            t1_attack_loss: !team1Wins ? ratings.t1_attack.current_loss_streak : 0,
+            t1_defense_win: team1Wins ? ratings.t1_defense.current_win_streak : 0,
+            t1_defense_loss: !team1Wins ? ratings.t1_defense.current_loss_streak : 0,
+            t2_attack_win: !team1Wins ? ratings.t2_attack.current_win_streak : 0,
+            t2_attack_loss: team1Wins ? ratings.t2_attack.current_loss_streak : 0,
+            t2_defense_win: !team1Wins ? ratings.t2_defense.current_win_streak : 0,
+            t2_defense_loss: team1Wins ? ratings.t2_defense.current_loss_streak : 0,
+        };
+
         // Calcul ELO individuel (attaque et défense)
         const eloChanges = calculateMatchElo(
             { score_team1, score_team2 },
@@ -62,8 +83,11 @@ router.post('/', authenticateToken, async (req, res) => {
                 rank_multiplier: s.rank_multiplier,
                 score_multiplier: s.score_multiplier,
                 duo_rank_multiplier: s.duo_rank_multiplier,
-                loss_multiplier: s.loss_multiplier
-            }
+                loss_multiplier: s.loss_multiplier,
+                win_streak_multiplier: s.win_streak_multiplier,
+                loss_streak_multiplier: s.loss_streak_multiplier
+            },
+            streaks
         );
 
         // Vérifier si c'est un match duo
@@ -83,6 +107,8 @@ router.post('/', authenticateToken, async (req, res) => {
 
         if (duo1.length > 0 && duo2.length > 0) {
             isDuo = true;
+            const team1DuoStreak = getTeamStreak(ratings.t1_attack, ratings.t1_defense, team1Wins);
+            const team2DuoStreak = getTeamStreak(ratings.t2_attack, ratings.t2_defense, !team1Wins);
             duoEloChanges = calculateDuoEloChange(
                 ratings.t1_attack.elo_duo, ratings.t1_defense.elo_duo,
                 ratings.t2_attack.elo_duo, ratings.t2_defense.elo_duo,
@@ -92,8 +118,12 @@ router.post('/', authenticateToken, async (req, res) => {
                     rank_multiplier: s.rank_multiplier,
                     score_multiplier: s.score_multiplier,
                     duo_rank_multiplier: s.duo_rank_multiplier,
-                    loss_multiplier: s.loss_multiplier
-                }
+                    loss_multiplier: s.loss_multiplier,
+                    win_streak_multiplier: s.win_streak_multiplier,
+                    loss_streak_multiplier: s.loss_streak_multiplier
+                },
+                team1DuoStreak,
+                team2DuoStreak
             );
         }
 
@@ -113,16 +143,16 @@ router.post('/', authenticateToken, async (req, res) => {
              req.user.id]
         );
 
-        const team1Wins = score_team1 > score_team2;
-
-        // Mettre à jour les ratings
+        // Mettre à jour les ratings + streaks
         const updateRating = async (playerId, eloAttackChange, eloDefenseChange, eloDuoChange, isAttacker, won) => {
             const field_wins = isAttacker ? (won ? 'wins_attack' : 'losses_attack') : (won ? 'wins_defense' : 'losses_defense');
             let query = `UPDATE player_ratings SET
                 elo_attack = GREATEST(0, elo_attack + ?),
                 elo_defense = GREATEST(0, elo_defense + ?),
                 elo_duo = GREATEST(0, elo_duo + ?),
-                ${field_wins} = ${field_wins} + 1`;
+                ${field_wins} = ${field_wins} + 1,
+                current_win_streak = ${won ? 'current_win_streak + 1' : '0'},
+                current_loss_streak = ${won ? '0' : 'current_loss_streak + 1'}`;
             if (isDuo) {
                 query += `, ${won ? 'wins_duo' : 'losses_duo'} = ${won ? 'wins_duo' : 'losses_duo'} + 1`;
             }
@@ -201,6 +231,8 @@ router.post('/1v1', authenticateToken, async (req, res) => {
         const r1 = await getRating(player1);
         const r2 = await getRating(player2);
 
+        const p1Wins = score_player1 > score_player2;
+
         const eloChanges = calculate1v1EloChange(
             r1.elo_1v1, r2.elo_1v1,
             score_player1, score_player2,
@@ -208,8 +240,12 @@ router.post('/1v1', authenticateToken, async (req, res) => {
                 base_k_factor: s.base_k_factor,
                 rank_multiplier: s.rank_multiplier,
                 score_multiplier: s.score_multiplier,
-                loss_multiplier: s.loss_multiplier
-            }
+                loss_multiplier: s.loss_multiplier,
+                win_streak_multiplier: s.win_streak_multiplier,
+                loss_streak_multiplier: s.loss_streak_multiplier
+            },
+            p1Wins ? r1.current_win_streak : r1.current_loss_streak,
+            !p1Wins ? r2.current_win_streak : r2.current_loss_streak
         );
 
         // Pour 1v1, on utilise team1_attack = player1, team2_attack = player2, defense = meme joueur
@@ -226,13 +262,14 @@ router.post('/1v1', authenticateToken, async (req, res) => {
              req.user.id]
         );
 
-        const p1Wins = score_player1 > score_player2;
-
+        // Update ratings + streaks
         await conn.query(
             `UPDATE player_ratings SET
                 elo_1v1 = GREATEST(0, elo_1v1 + ?),
                 wins_1v1 = wins_1v1 + ?,
-                losses_1v1 = losses_1v1 + ?
+                losses_1v1 = losses_1v1 + ?,
+                current_win_streak = ${p1Wins ? 'current_win_streak + 1' : '0'},
+                current_loss_streak = ${p1Wins ? '0' : 'current_loss_streak + 1'}
              WHERE player_id = ? AND season_id = ?`,
             [eloChanges.elo_change_1v1_t1, p1Wins ? 1 : 0, p1Wins ? 0 : 1, player1, s.id]
         );
@@ -241,7 +278,9 @@ router.post('/1v1', authenticateToken, async (req, res) => {
             `UPDATE player_ratings SET
                 elo_1v1 = GREATEST(0, elo_1v1 + ?),
                 wins_1v1 = wins_1v1 + ?,
-                losses_1v1 = losses_1v1 + ?
+                losses_1v1 = losses_1v1 + ?,
+                current_win_streak = ${!p1Wins ? 'current_win_streak + 1' : '0'},
+                current_loss_streak = ${!p1Wins ? '0' : 'current_loss_streak + 1'}
              WHERE player_id = ? AND season_id = ?`,
             [eloChanges.elo_change_1v1_t2, !p1Wins ? 1 : 0, !p1Wins ? 0 : 1, player2, s.id]
         );

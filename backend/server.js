@@ -11,7 +11,8 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Servir le frontend
+// Servir les assets partages et le frontend
+app.use('/assets', express.static(path.join(__dirname, '..', 'assets')));
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
 
 // Routes API
@@ -23,6 +24,8 @@ app.use('/api/seasons', require('./routes/seasons'));
 app.use('/api/duos', require('./routes/duos'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/tournaments', require('./routes/tournaments'));
+app.use('/api/rules', require('./routes/rules'));
+app.use('/api/lobbies', require('./routes/lobbies'));
 
 // SPA fallback
 app.get('*', (req, res) => {

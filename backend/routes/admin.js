@@ -2,6 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const pool = require('../config/db');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
+const { recomputeCurrentStreaks } = require('../utils/streaks');
 
 const router = express.Router();
 
@@ -71,7 +72,7 @@ router.delete('/duos/:id', authenticateToken, requireAdmin, async (req, res) => 
 router.get('/players', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const [rows] = await pool.query(
-            'SELECT id, identifier, display_name, is_admin, created_at FROM players ORDER BY display_name'
+            'SELECT id, identifier, display_name, is_admin, profile_photo, created_at FROM players ORDER BY display_name'
         );
         res.json(rows);
     } catch (err) {
@@ -144,6 +145,11 @@ router.put('/matches/:id/cancel', authenticateToken, requireAdmin, async (req, r
 
         // Marquer le match comme annulé
         await conn.query('UPDATE matches SET is_cancelled = 1 WHERE id = ?', [m.id]);
+
+        const affectedPlayerIds = m.match_type === '1v1'
+            ? [m.team1_attack, m.team2_attack]
+            : [m.team1_attack, m.team1_defense, m.team2_attack, m.team2_defense];
+        await recomputeCurrentStreaks(conn, m.season_id, affectedPlayerIds);
 
         await conn.commit();
         res.json({ message: 'Match annulé et ELO inversé' });
@@ -256,6 +262,41 @@ router.get('/duos', authenticateToken, requireAdmin, async (req, res) => {
         res.json(duos);
     } catch (err) {
         res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+router.post('/sql', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const sql = String(req.body?.sql || '').trim();
+        if (!sql) {
+            return res.status(400).json({ error: 'La requete SQL est vide' });
+        }
+
+        const [result, fields] = await pool.query(sql);
+        const fieldNames = Array.isArray(fields) ? fields.map((field) => field.name) : [];
+
+        if (Array.isArray(result)) {
+            const limitedRows = result.slice(0, 200);
+            return res.json({
+                kind: 'rows',
+                row_count: result.length,
+                truncated: result.length > limitedRows.length,
+                columns: fieldNames,
+                rows: limitedRows,
+            });
+        }
+
+        res.json({
+            kind: 'mutation',
+            affectedRows: result?.affectedRows ?? 0,
+            changedRows: result?.changedRows ?? 0,
+            insertId: result?.insertId ?? 0,
+            warningStatus: result?.warningStatus ?? 0,
+            message: result?.info || 'Requete executee',
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(400).json({ error: err.message || 'Erreur SQL' });
     }
 });
 

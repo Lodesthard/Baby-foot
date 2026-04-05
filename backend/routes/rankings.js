@@ -27,7 +27,7 @@ router.get('/attack', authenticateToken, async (req, res) => {
         await ensureSeasonRatings(seasonId);
 
         const [rows] = await pool.query(
-            `SELECT pr.*, p.display_name
+            `SELECT pr.*, p.display_name, p.profile_photo
              FROM player_ratings pr
              JOIN players p ON pr.player_id = p.id
              WHERE pr.season_id = ?
@@ -39,6 +39,7 @@ router.get('/attack', authenticateToken, async (req, res) => {
             position: i + 1,
             player_id: r.player_id,
             display_name: r.display_name,
+            profile_photo: r.profile_photo,
             elo: r.elo_attack,
             rank: getRank(r.elo_attack),
             wins: r.wins_attack,
@@ -61,7 +62,7 @@ router.get('/defense', authenticateToken, async (req, res) => {
         await ensureSeasonRatings(seasonId);
 
         const [rows] = await pool.query(
-            `SELECT pr.*, p.display_name
+            `SELECT pr.*, p.display_name, p.profile_photo
              FROM player_ratings pr
              JOIN players p ON pr.player_id = p.id
              WHERE pr.season_id = ?
@@ -73,6 +74,7 @@ router.get('/defense', authenticateToken, async (req, res) => {
             position: i + 1,
             player_id: r.player_id,
             display_name: r.display_name,
+            profile_photo: r.profile_photo,
             elo: r.elo_defense,
             rank: getRank(r.elo_defense),
             wins: r.wins_defense,
@@ -141,7 +143,7 @@ router.get('/1v1', authenticateToken, async (req, res) => {
         await ensureSeasonRatings(seasonId);
 
         const [rows] = await pool.query(
-            `SELECT pr.*, p.display_name
+            `SELECT pr.*, p.display_name, p.profile_photo
              FROM player_ratings pr
              JOIN players p ON pr.player_id = p.id
              WHERE pr.season_id = ?
@@ -153,6 +155,7 @@ router.get('/1v1', authenticateToken, async (req, res) => {
             position: i + 1,
             player_id: r.player_id,
             display_name: r.display_name,
+            profile_photo: r.profile_photo,
             elo: r.elo_1v1,
             rank: getRank(r.elo_1v1),
             wins: r.wins_1v1,
@@ -175,7 +178,7 @@ router.get('/global', authenticateToken, async (req, res) => {
         await ensureSeasonRatings(seasonId);
 
         const [rows] = await pool.query(
-            `SELECT pr.*, p.display_name
+            `SELECT pr.*, p.display_name, p.profile_photo
              FROM player_ratings pr
              JOIN players p ON pr.player_id = p.id
              WHERE pr.season_id = ?
@@ -183,16 +186,23 @@ router.get('/global', authenticateToken, async (req, res) => {
             [seasonId]
         );
 
-        const ranked = rows.map((r, i) => ({
-            position: i + 1,
-            player_id: r.player_id,
-            display_name: r.display_name,
-            elo: r.elo_attack + r.elo_defense + r.elo_1v1,
-            rank: getRank(Math.round((r.elo_attack + r.elo_defense + r.elo_1v1) / 3)),
-            elo_attack: r.elo_attack,
-            elo_defense: r.elo_defense,
-            elo_1v1: r.elo_1v1,
-        }));
+        const ranked = rows.map((r, i) => {
+            const totalWins = r.wins_attack + r.wins_defense + r.wins_1v1;
+            const totalLosses = r.losses_attack + r.losses_defense + r.losses_1v1;
+            return {
+                position: i + 1,
+                player_id: r.player_id,
+                display_name: r.display_name,
+                profile_photo: r.profile_photo,
+                elo: r.elo_attack + r.elo_defense + r.elo_1v1,
+                rank: getRank(Math.round((r.elo_attack + r.elo_defense + r.elo_1v1) / 3)),
+                elo_attack: r.elo_attack,
+                elo_defense: r.elo_defense,
+                elo_1v1: r.elo_1v1,
+                wins: totalWins,
+                losses: totalLosses,
+            };
+        });
 
         res.json(ranked);
     } catch (err) {

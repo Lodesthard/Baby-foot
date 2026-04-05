@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS seasons (
     score_multiplier DECIMAL(4,2) DEFAULT 0.10,
     duo_rank_multiplier DECIMAL(4,2) DEFAULT 1.30,
     loss_multiplier DECIMAL(4,2) DEFAULT 1.00,
+    win_streak_multiplier DECIMAL(4,2) DEFAULT 0.05,
+    loss_streak_multiplier DECIMAL(4,2) DEFAULT 0.05,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

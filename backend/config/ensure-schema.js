@@ -14,6 +14,18 @@ async function ensureSchema(connOrPool) {
         );
     }
 
+    if (!seasonColumnNames.has('win_streak_multiplier')) {
+        await connOrPool.query(
+            'ALTER TABLE seasons ADD COLUMN win_streak_multiplier DECIMAL(4,2) DEFAULT 0.05 AFTER loss_multiplier'
+        );
+    }
+
+    if (!seasonColumnNames.has('loss_streak_multiplier')) {
+        await connOrPool.query(
+            'ALTER TABLE seasons ADD COLUMN loss_streak_multiplier DECIMAL(4,2) DEFAULT 0.05 AFTER win_streak_multiplier'
+        );
+    }
+
     // === 1v1 support ===
     const [prColumns] = await connOrPool.query('SHOW COLUMNS FROM player_ratings');
     const prColumnNames = new Set(prColumns.map((c) => c.Field));
@@ -22,6 +34,12 @@ async function ensureSchema(connOrPool) {
         await connOrPool.query('ALTER TABLE player_ratings ADD COLUMN elo_1v1 INT DEFAULT 1200 AFTER elo_duo');
         await connOrPool.query('ALTER TABLE player_ratings ADD COLUMN wins_1v1 INT DEFAULT 0 AFTER losses_duo');
         await connOrPool.query('ALTER TABLE player_ratings ADD COLUMN losses_1v1 INT DEFAULT 0 AFTER wins_1v1');
+    }
+
+    // === Streak columns ===
+    if (!prColumnNames.has('current_win_streak')) {
+        await connOrPool.query('ALTER TABLE player_ratings ADD COLUMN current_win_streak INT DEFAULT 0');
+        await connOrPool.query('ALTER TABLE player_ratings ADD COLUMN current_loss_streak INT DEFAULT 0');
     }
 
     // match_type ENUM: add '1v1'
@@ -96,6 +114,60 @@ async function ensureSchema(connOrPool) {
             FOREIGN KEY (winner_participant_id) REFERENCES tournament_participants(id),
             FOREIGN KEY (match_id) REFERENCES matches(id)
         )`);
+    }
+
+    // === Profile photo column ===
+    const [playerColumns] = await connOrPool.query('SHOW COLUMNS FROM players');
+    const playerColumnNames = new Set(playerColumns.map((c) => c.Field));
+    if (!playerColumnNames.has('profile_photo')) {
+        await connOrPool.query("ALTER TABLE players ADD COLUMN profile_photo VARCHAR(255) DEFAULT NULL AFTER display_name");
+    }
+
+    // === Rules table ===
+    const [rulesTables] = await connOrPool.query("SHOW TABLES LIKE 'rules'");
+    if (rulesTables.length === 0) {
+        await connOrPool.query(`CREATE TABLE rules (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            content TEXT NOT NULL,
+            updated_by INT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (updated_by) REFERENCES players(id)
+        )`);
+    }
+
+    // === Lobbies table ===
+    const [lobbiesTables] = await connOrPool.query("SHOW TABLES LIKE 'lobbies'");
+    if (lobbiesTables.length === 0) {
+        await connOrPool.query(`CREATE TABLE lobbies (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            code VARCHAR(20) NOT NULL UNIQUE,
+            match_type ENUM('solo', 'duo', '1v1') NOT NULL DEFAULT 'solo',
+            created_by INT NOT NULL,
+            status ENUM('waiting', 'ready', 'completed', 'cancelled') DEFAULT 'waiting',
+            slot_t1_attack INT DEFAULT NULL,
+            slot_t1_defense INT DEFAULT NULL,
+            slot_t2_attack INT DEFAULT NULL,
+            slot_t2_defense INT DEFAULT NULL,
+            slot_1v1_p1 INT DEFAULT NULL,
+            slot_1v1_p2 INT DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (created_by) REFERENCES players(id),
+            FOREIGN KEY (slot_t1_attack) REFERENCES players(id),
+            FOREIGN KEY (slot_t1_defense) REFERENCES players(id),
+            FOREIGN KEY (slot_t2_attack) REFERENCES players(id),
+            FOREIGN KEY (slot_t2_defense) REFERENCES players(id),
+            FOREIGN KEY (slot_1v1_p1) REFERENCES players(id),
+            FOREIGN KEY (slot_1v1_p2) REFERENCES players(id)
+        )`);
+    } else {
+        const [lobbyColumns] = await connOrPool.query('SHOW COLUMNS FROM lobbies');
+        const lobbyMatchType = lobbyColumns.find((c) => c.Field === 'match_type');
+        if (lobbyMatchType && !lobbyMatchType.Type.includes("'duo'")) {
+            await connOrPool.query(
+                `ALTER TABLE lobbies
+                 MODIFY COLUMN match_type ENUM('solo', 'duo', '1v1') NOT NULL DEFAULT 'solo'`
+            );
+        }
     }
 }
 
