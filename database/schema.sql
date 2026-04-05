@@ -111,6 +111,61 @@ CREATE TABLE IF NOT EXISTS matches (
 );
 
 -- ============================================
+-- Tournois
+-- ============================================
+CREATE TABLE IF NOT EXISTS tournaments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    season_id INT NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    tournament_type ENUM('simple', 'double') NOT NULL,
+    status ENUM('registration', 'in_progress', 'completed', 'cancelled') DEFAULT 'registration',
+    max_participants INT DEFAULT 16,
+    created_by INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP NULL,
+    completed_at TIMESTAMP NULL,
+    FOREIGN KEY (season_id) REFERENCES seasons(id),
+    FOREIGN KEY (created_by) REFERENCES players(id)
+);
+
+-- ============================================
+-- Participants aux tournois
+-- ============================================
+CREATE TABLE IF NOT EXISTS tournament_participants (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    tournament_id INT NOT NULL,
+    player_id INT DEFAULT NULL,
+    duo_id INT DEFAULT NULL,
+    seed INT DEFAULT NULL,
+    registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_player_tournament (tournament_id, player_id),
+    UNIQUE KEY unique_duo_tournament (tournament_id, duo_id),
+    FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+    FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE,
+    FOREIGN KEY (duo_id) REFERENCES duos(id) ON DELETE CASCADE
+);
+
+-- ============================================
+-- Matchs de tournoi (bracket)
+-- ============================================
+CREATE TABLE IF NOT EXISTS tournament_matches (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    tournament_id INT NOT NULL,
+    round INT NOT NULL,
+    position INT NOT NULL,
+    participant1_id INT DEFAULT NULL,
+    participant2_id INT DEFAULT NULL,
+    winner_participant_id INT DEFAULT NULL,
+    match_id INT DEFAULT NULL,
+    is_bye TINYINT(1) DEFAULT 0,
+    FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+    FOREIGN KEY (participant1_id) REFERENCES tournament_participants(id),
+    FOREIGN KEY (participant2_id) REFERENCES tournament_participants(id),
+    FOREIGN KEY (winner_participant_id) REFERENCES tournament_participants(id),
+    FOREIGN KEY (match_id) REFERENCES matches(id)
+);
+
+-- ============================================
 -- Historique ELO pour graphiques
 -- ============================================
 CREATE TABLE IF NOT EXISTS elo_history (

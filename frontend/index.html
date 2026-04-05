@@ -65,6 +65,7 @@
             <button data-page="home" onclick="navigate('home')">Accueil</button>
             <button data-page="match" onclick="navigate('match')">Match</button>
             <button data-page="rankings" onclick="navigate('rankings')">Classement</button>
+            <button data-page="tournaments" onclick="navigate('tournaments')">Tournois</button>
             <button data-page="history" onclick="navigate('history')">Historique</button>
             <button data-page="profile" onclick="navigate('profile')">Profil</button>
             <button data-page="admin" onclick="navigate('admin')">Admin</button>
@@ -84,6 +85,10 @@
             <input type="text" class="search-input" id="ranking-search"
                 placeholder="Rechercher un joueur..." oninput="filterRankings(this.value)">
             <div id="ranking-list"><div class="loading">Chargement...</div></div>
+        </div>
+
+        <div id="page-tournaments" class="page">
+            <div id="tournaments-content"><div class="loading">Chargement...</div></div>
         </div>
 
         <div id="page-history" class="page">

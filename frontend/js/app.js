@@ -164,6 +164,7 @@ function navigate(page) {
         case 'home': loadHome(); break;
         case 'match': loadMatchPage(); break;
         case 'rankings': loadRankings(); break;
+        case 'tournaments': loadTournaments(); break;
         case 'history': loadHistory(); break;
         case 'profile': loadProfile(); break;
         case 'admin': loadAdmin(); break;
@@ -1444,6 +1445,458 @@ async function deleteDuo(duoId) {
         await api(`/admin/duos/${duoId}`, { method: 'DELETE' });
         loadAdmin();
     } catch (err) { alert(err.message); }
+}
+
+// ===== Tournaments =====
+let currentTournamentView = 'list'; // 'list' or 'detail'
+let currentTournamentId = null;
+
+async function loadTournaments() {
+    currentTournamentView = 'list';
+    currentTournamentId = null;
+    const container = document.getElementById('tournaments-content');
+    container.innerHTML = '<div class="loading">Chargement...</div>';
+
+    try {
+        const tournaments = await api('/tournaments');
+        const player = getPlayer();
+
+        let html = `<div class="section-title">Tournois</div>`;
+
+        if (player?.is_admin) {
+            html += `<div class="card">
+                <div class="card-title">Creer un tournoi</div>
+                <form onsubmit="createTournament(event)">
+                    <div class="form-group">
+                        <label>Nom du tournoi</label>
+                        <input type="text" id="tournament-name" placeholder="Ex: Tournoi de Noel" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Type</label>
+                        <div class="mode-toggle">
+                            <button type="button" class="active" id="tourney-type-simple" onclick="setTourneyType('simple')">Simple (1v1)</button>
+                            <button type="button" id="tourney-type-double" onclick="setTourneyType('double')">Double (Duo)</button>
+                        </div>
+                        <input type="hidden" id="tournament-type" value="simple">
+                    </div>
+                    <div class="form-group">
+                        <label>Participants max</label>
+                        <select id="tournament-max">
+                            <option value="4">4</option>
+                            <option value="8" selected>8</option>
+                            <option value="16">16</option>
+                            <option value="32">32</option>
+                        </select>
+                    </div>
+                    <div id="tournament-create-error" class="error-msg"></div>
+                    <button type="submit" class="btn">Creer le tournoi</button>
+                </form>
+            </div>`;
+        }
+
+        if (tournaments.length === 0) {
+            html += '<div class="empty-state">Aucun tournoi cette saison</div>';
+        } else {
+            for (const t of tournaments) {
+                const statusLabel = {
+                    'registration': 'Inscriptions ouvertes',
+                    'in_progress': 'En cours',
+                    'completed': 'Termine',
+                    'cancelled': 'Annule'
+                }[t.status];
+                const statusClass = {
+                    'registration': 'status-registration',
+                    'in_progress': 'status-inprogress',
+                    'completed': 'status-completed',
+                    'cancelled': 'status-cancelled'
+                }[t.status];
+                const typeLabel = t.tournament_type === 'simple' ? '1v1' : 'Duo';
+
+                html += `<div class="tournament-card" onclick="viewTournament(${t.id})">
+                    <div class="tournament-card-header">
+                        <div>
+                            <div class="tournament-name">${t.name}</div>
+                            <div class="tournament-meta">
+                                <span class="tournament-type-badge">${typeLabel}</span>
+                                <span>${t.participant_count}/${t.max_participants} participants</span>
+                            </div>
+                        </div>
+                        <span class="tournament-status ${statusClass}">${statusLabel}</span>
+                    </div>
+                    <div class="tournament-card-footer">
+                        <span>Par ${t.created_by_name}</span>
+                        <span>${formatDate(t.created_at)}</span>
+                    </div>
+                </div>`;
+            }
+        }
+
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = `<div class="empty-state">${err.message}</div>`;
+    }
+}
+
+function setTourneyType(type) {
+    document.getElementById('tournament-type').value = type;
+    document.getElementById('tourney-type-simple').classList.toggle('active', type === 'simple');
+    document.getElementById('tourney-type-double').classList.toggle('active', type === 'double');
+}
+
+async function createTournament(e) {
+    e.preventDefault();
+    const errEl = document.getElementById('tournament-create-error');
+    errEl.textContent = '';
+
+    try {
+        await api('/tournaments', {
+            method: 'POST',
+            body: JSON.stringify({
+                name: document.getElementById('tournament-name').value.trim(),
+                tournament_type: document.getElementById('tournament-type').value,
+                max_participants: parseInt(document.getElementById('tournament-max').value)
+            })
+        });
+        showToast('Tournoi cree');
+        loadTournaments();
+    } catch (err) {
+        errEl.textContent = err.message;
+    }
+}
+
+async function viewTournament(id) {
+    currentTournamentView = 'detail';
+    currentTournamentId = id;
+    const container = document.getElementById('tournaments-content');
+    container.innerHTML = '<div class="loading">Chargement...</div>';
+
+    try {
+        const data = await api(`/tournaments/${id}`);
+        const { tournament: t, participants, matches } = data;
+        const player = getPlayer();
+
+        const typeLabel = t.tournament_type === 'simple' ? '1v1' : 'Duo';
+        const statusLabel = {
+            'registration': 'Inscriptions ouvertes',
+            'in_progress': 'En cours',
+            'completed': 'Termine',
+            'cancelled': 'Annule'
+        }[t.status];
+        const statusClass = {
+            'registration': 'status-registration',
+            'in_progress': 'status-inprogress',
+            'completed': 'status-completed',
+            'cancelled': 'status-cancelled'
+        }[t.status];
+
+        let html = `<button class="btn btn-small btn-secondary" onclick="loadTournaments()" style="margin-bottom:12px">&larr; Retour</button>`;
+
+        html += `<div class="tournament-detail-header">
+            <div>
+                <h2 style="margin:0">${t.name}</h2>
+                <div class="tournament-meta" style="margin-top:4px">
+                    <span class="tournament-type-badge">${typeLabel}</span>
+                    <span class="tournament-status ${statusClass}">${statusLabel}</span>
+                    <span>${participants.length}/${t.max_participants} participants</span>
+                </div>
+            </div>
+        </div>`;
+
+        // Registration phase
+        if (t.status === 'registration') {
+            // Check if user is registered
+            let isRegistered = false;
+            if (t.tournament_type === 'simple') {
+                isRegistered = participants.some(p => p.player_id === player.id);
+            } else {
+                // Check if user's duo is registered
+                isRegistered = participants.some(p => p.player1_id === player.id || p.player2_id === player.id);
+            }
+
+            if (isRegistered) {
+                html += `<div class="card">
+                    <div style="color:var(--green);font-weight:600;margin-bottom:8px">Vous etes inscrit !</div>
+                    <button class="btn btn-small btn-danger" onclick="unregisterTournament(${t.id})">Se desinscrire</button>
+                </div>`;
+            } else {
+                if (t.tournament_type === 'simple') {
+                    html += `<div class="card">
+                        <button class="btn" onclick="registerTournament(${t.id})">S'inscrire</button>
+                    </div>`;
+                } else {
+                    // Need to select duo
+                    html += `<div class="card" id="tournament-register-duo">`;
+                    html += await renderDuoRegistration(t);
+                    html += `</div>`;
+                }
+            }
+
+            // Admin: start tournament button
+            if (player?.is_admin && participants.length >= 2) {
+                html += `<div class="card">
+                    <button class="btn" onclick="startTournament(${t.id})">Lancer le tournoi (${participants.length} participants)</button>
+                </div>`;
+            }
+        }
+
+        // Admin: cancel button
+        if (player?.is_admin && t.status !== 'completed' && t.status !== 'cancelled') {
+            html += `<button class="btn btn-small btn-danger" onclick="cancelTournament(${t.id})" style="margin-bottom:12px">Annuler le tournoi</button>`;
+        }
+
+        // Participants list
+        html += `<div class="section-title">Participants</div>`;
+        if (participants.length === 0) {
+            html += '<div class="empty-state">Aucun participant</div>';
+        } else {
+            for (const p of participants) {
+                if (t.tournament_type === 'simple') {
+                    const rankName = getRankName(p.elo_1v1 || 1200);
+                    const colorClass = getRankColorClass(rankName);
+                    html += `<div class="tournament-participant">
+                        <div>
+                            ${p.seed ? `<span class="participant-seed">#${p.seed}</span>` : ''}
+                            <span class="participant-name">${p.display_name}</span>
+                        </div>
+                        <div class="rank-badge badge-${colorClass}">${rankName} (${p.elo_1v1 || 1200})</div>
+                    </div>`;
+                } else {
+                    const avgElo = Math.round(((p.elo_duo_p1 || 1200) + (p.elo_duo_p2 || 1200)) / 2);
+                    const rankName = getRankName(avgElo);
+                    const colorClass = getRankColorClass(rankName);
+                    html += `<div class="tournament-participant">
+                        <div>
+                            ${p.seed ? `<span class="participant-seed">#${p.seed}</span>` : ''}
+                            <span class="participant-name">${p.duo_name || (p.player1_name + ' & ' + p.player2_name)}</span>
+                            ${p.duo_name ? `<span style="color:var(--text-muted);font-size:12px;margin-left:6px">${p.player1_name} & ${p.player2_name}</span>` : ''}
+                        </div>
+                        <div class="rank-badge badge-${colorClass}">${rankName} (${avgElo})</div>
+                    </div>`;
+                }
+            }
+        }
+
+        // Bracket
+        if (matches.length > 0) {
+            html += renderBracket(t, participants, matches, player);
+        }
+
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = `<div class="empty-state">${err.message}</div>`;
+    }
+}
+
+async function renderDuoRegistration(tournament) {
+    try {
+        const duo = await api('/duos/mine');
+        if (!duo) {
+            return `<div style="color:var(--text-muted)">Vous devez avoir un duo pour vous inscrire. Creez-en un dans l'onglet Profil.</div>`;
+        }
+        const duoLabel = duo.duo_name || `${duo.player1_name} & ${duo.player2_name}`;
+        return `<div style="margin-bottom:8px">Votre duo : <strong>${duoLabel}</strong></div>
+                <button class="btn" onclick="registerTournamentDuo(${tournament.id}, ${duo.id})">Inscrire mon duo</button>`;
+    } catch {
+        return `<div style="color:var(--text-muted)">Vous devez avoir un duo pour vous inscrire.</div>`;
+    }
+}
+
+function renderBracket(tournament, participants, matches, player) {
+    // Build participant lookup
+    const partMap = {};
+    for (const p of participants) {
+        partMap[p.id] = p;
+    }
+
+    // Group matches by round
+    const rounds = {};
+    let maxRound = 0;
+    for (const m of matches) {
+        if (!rounds[m.round]) rounds[m.round] = [];
+        rounds[m.round].push(m);
+        if (m.round > maxRound) maxRound = m.round;
+    }
+
+    const roundNames = [];
+    for (let r = 1; r <= maxRound; r++) {
+        if (r === maxRound) roundNames.push('Finale');
+        else if (r === maxRound - 1) roundNames.push('Demi-finales');
+        else if (r === maxRound - 2) roundNames.push('Quarts');
+        else roundNames.push(`Tour ${r}`);
+    }
+
+    let html = `<div class="section-title">Bracket</div>`;
+    html += `<div class="bracket-container">`;
+
+    for (let r = 1; r <= maxRound; r++) {
+        const roundMatches = rounds[r] || [];
+        html += `<div class="bracket-round">`;
+        html += `<div class="bracket-round-title">${roundNames[r - 1]}</div>`;
+
+        for (const m of roundMatches) {
+            const p1 = m.participant1_id ? partMap[m.participant1_id] : null;
+            const p2 = m.participant2_id ? partMap[m.participant2_id] : null;
+
+            const p1Name = getParticipantName(p1, tournament.tournament_type);
+            const p2Name = getParticipantName(p2, tournament.tournament_type);
+
+            const hasResult = m.winner_participant_id !== null;
+            const p1Won = hasResult && m.winner_participant_id === m.participant1_id;
+            const p2Won = hasResult && m.winner_participant_id === m.participant2_id;
+
+            const isPlayable = !hasResult && !m.is_bye && m.participant1_id && m.participant2_id
+                && tournament.status === 'in_progress' && player?.is_admin;
+
+            html += `<div class="bracket-match ${m.is_bye ? 'bracket-bye' : ''}">
+                <div class="bracket-player ${p1Won ? 'bracket-winner' : ''} ${hasResult && !p1Won ? 'bracket-loser' : ''}">
+                    <span>${p1Name}</span>
+                    ${hasResult && m.score_team1 !== null ? `<span class="bracket-score">${m.score_team1}</span>` : ''}
+                </div>
+                <div class="bracket-player ${p2Won ? 'bracket-winner' : ''} ${hasResult && !p2Won ? 'bracket-loser' : ''}">
+                    <span>${p2Name}</span>
+                    ${hasResult && m.score_team2 !== null ? `<span class="bracket-score">${m.score_team2}</span>` : ''}
+                </div>
+                ${isPlayable ? `<button class="btn btn-small bracket-play-btn" onclick="showTournamentMatchForm(${tournament.id}, ${m.id}, '${p1Name.replace(/'/g, "\\'")}', '${p2Name.replace(/'/g, "\\'")}')">Jouer</button>` : ''}
+            </div>`;
+        }
+
+        html += `</div>`;
+    }
+
+    // Show winner
+    if (tournament.status === 'completed') {
+        const finalMatch = (rounds[maxRound] || [])[0];
+        if (finalMatch && finalMatch.winner_participant_id) {
+            const winner = partMap[finalMatch.winner_participant_id];
+            const winnerName = getParticipantName(winner, tournament.tournament_type);
+            html += `<div class="bracket-round bracket-champion">
+                <div class="bracket-round-title">Champion</div>
+                <div class="bracket-champion-name">${winnerName}</div>
+            </div>`;
+        }
+    }
+
+    html += `</div>`;
+    return html;
+}
+
+function getParticipantName(participant, type) {
+    if (!participant) return 'A determiner';
+    if (type === 'simple') return participant.display_name || '?';
+    return participant.duo_name || `${participant.player1_name} & ${participant.player2_name}`;
+}
+
+async function registerTournament(tournamentId) {
+    try {
+        await api(`/tournaments/${tournamentId}/register`, { method: 'POST', body: '{}' });
+        showToast('Inscription confirmee');
+        viewTournament(tournamentId);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function registerTournamentDuo(tournamentId, duoId) {
+    try {
+        await api(`/tournaments/${tournamentId}/register`, {
+            method: 'POST',
+            body: JSON.stringify({ duo_id: duoId })
+        });
+        showToast('Duo inscrit');
+        viewTournament(tournamentId);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function unregisterTournament(tournamentId) {
+    try {
+        await api(`/tournaments/${tournamentId}/register`, { method: 'DELETE' });
+        showToast('Desinscription confirmee');
+        viewTournament(tournamentId);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function startTournament(tournamentId) {
+    if (!confirm('Lancer le tournoi ? Les inscriptions seront fermees et le bracket genere.')) return;
+    try {
+        await api(`/tournaments/${tournamentId}/start`, { method: 'POST', body: '{}' });
+        showToast('Tournoi lance');
+        viewTournament(tournamentId);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function cancelTournament(tournamentId) {
+    if (!confirm('Annuler ce tournoi ?')) return;
+    try {
+        await api(`/tournaments/${tournamentId}`, { method: 'DELETE' });
+        showToast('Tournoi annule');
+        loadTournaments();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+function showTournamentMatchForm(tournamentId, matchId, p1Name, p2Name) {
+    const overlay = document.createElement('div');
+    overlay.className = 'elo-result-overlay';
+    overlay.innerHTML = `
+        <div class="elo-result-box">
+            <h2>Match de tournoi</h2>
+            <div style="font-size:14px;margin-bottom:16px">
+                <strong>${p1Name}</strong> vs <strong>${p2Name}</strong>
+            </div>
+            <form onsubmit="submitTournamentMatch(event, ${tournamentId}, ${matchId})">
+                <div class="score-input">
+                    <div>
+                        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">${p1Name}</div>
+                        <input type="number" id="tourney-score1" min="0" max="20" value="0" inputmode="numeric">
+                    </div>
+                    <span class="score-vs">VS</span>
+                    <div>
+                        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">${p2Name}</div>
+                        <input type="number" id="tourney-score2" min="0" max="20" value="0" inputmode="numeric">
+                    </div>
+                </div>
+                <div id="tourney-match-error" class="error-msg"></div>
+                <div style="display:flex;gap:8px;margin-top:12px">
+                    <button type="submit" class="btn">Valider</button>
+                    <button type="button" class="btn btn-secondary" onclick="this.closest('.elo-result-overlay').remove()">Annuler</button>
+                </div>
+            </form>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+}
+
+async function submitTournamentMatch(e, tournamentId, matchId) {
+    e.preventDefault();
+    const errEl = document.getElementById('tourney-match-error');
+    errEl.textContent = '';
+
+    const score1 = parseInt(document.getElementById('tourney-score1').value);
+    const score2 = parseInt(document.getElementById('tourney-score2').value);
+
+    if (score1 === score2) {
+        errEl.textContent = 'Pas de match nul !';
+        return;
+    }
+
+    try {
+        await api(`/tournaments/${tournamentId}/matches/${matchId}/result`, {
+            method: 'POST',
+            body: JSON.stringify({ score1, score2 })
+        });
+        document.querySelector('.elo-result-overlay')?.remove();
+        showToast('Resultat enregistre');
+        viewTournament(tournamentId);
+    } catch (err) {
+        errEl.textContent = err.message;
+    }
 }
 
 // ===== Init =====
