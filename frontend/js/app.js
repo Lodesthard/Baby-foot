@@ -16,6 +16,25 @@ const RANK_META = {
     Challenger: { colorClass: 'challenger', asset: 'challenger.png' },
 };
 
+const APP_BASE_PATH = (() => {
+    const scriptSrc = document.currentScript?.src;
+    if (scriptSrc) {
+        return new URL('..', scriptSrc).pathname.replace(/\/$/, '');
+    }
+    const pathname = window.location.pathname || '/';
+    return pathname === '/' ? '' : pathname.replace(/\/$/, '').replace(/\/[^/]+$/, '');
+})();
+
+function withAppBasePath(path) {
+    const rawPath = String(path || '');
+    if (!rawPath) return '';
+    if (/^(?:[a-z]+:)?\/\//i.test(rawPath) || rawPath.startsWith('data:') || rawPath.startsWith('blob:')) {
+        return rawPath;
+    }
+    const normalizedPath = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+    return APP_BASE_PATH ? `${APP_BASE_PATH}${normalizedPath}` : normalizedPath;
+}
+
 function getRankBaseName(rankName) {
     const normalizedRankName = String(rankName || '');
     return Object.keys(RANK_META).find((key) => normalizedRankName.startsWith(key)) || DEFAULT_RANK_KEY;
@@ -30,7 +49,7 @@ function getRankColorClass(rankName) {
 }
 
 function getRankIconUrl(rankName) {
-    return `/assets/${getRankMeta(rankName).asset}`;
+    return withAppBasePath(`/assets/${getRankMeta(rankName).asset}`);
 }
 
 function formatDate(dateStr) {
@@ -264,7 +283,7 @@ function renderMatchEloHelp() {
 function avatarHtml(photoUrl, size) {
     size = size || 40;
     if (photoUrl) {
-        return `<img src="${photoUrl}" class="avatar" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;">`;
+        return `<img src="${withAppBasePath(photoUrl)}" class="avatar" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;">`;
     }
     return `<div class="avatar-placeholder" style="width:${size}px;height:${size}px;border-radius:50%;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;font-size:${Math.round(size*0.4)}px;color:var(--text-muted);">?</div>`;
 }
