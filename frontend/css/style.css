@@ -719,10 +719,12 @@ body {
     top: 0; left: 0; right: 0; bottom: 0;
     background: rgba(0,0,0,0.8);
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
     z-index: 200;
     padding: 24px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 .elo-result-box {
@@ -733,6 +735,8 @@ body {
     width: 100%;
     max-width: 400px;
     text-align: center;
+    margin: auto 0;
+    flex-shrink: 0;
 }
 
 .elo-result-box h2 {
@@ -1754,6 +1758,7 @@ textarea {
 .elo-result-overlay {
     background: rgba(3, 4, 8, 0.72);
     backdrop-filter: blur(14px);
+    align-items: flex-start;
 }
 
 .elo-result-box {
