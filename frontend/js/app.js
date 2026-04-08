@@ -15,6 +15,7 @@ const RANK_META = {
     Grandmaster: { colorClass: 'grandmaster', asset: 'grandmaster.png' },
     Challenger: { colorClass: 'challenger', asset: 'challenger.png' },
 };
+const AVATAR_FALLBACK_SRC = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Ccircle cx='64' cy='64' r='64' fill='%23161c28'/%3E%3Ctext x='64' y='82' text-anchor='middle' font-size='58' font-family='Arial, sans-serif' fill='%2396a0b5'%3E%3F%3C/text%3E%3C/svg%3E";
 
 const APP_BASE_PATH = (() => {
     const scriptSrc = document.currentScript?.src;
@@ -32,6 +33,9 @@ function withAppBasePath(path) {
         return rawPath;
     }
     const normalizedPath = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+    if (APP_BASE_PATH && (normalizedPath === APP_BASE_PATH || normalizedPath.startsWith(`${APP_BASE_PATH}/`))) {
+        return normalizedPath;
+    }
     return APP_BASE_PATH ? `${APP_BASE_PATH}${normalizedPath}` : normalizedPath;
 }
 
@@ -291,10 +295,12 @@ function renderMatchEloHelp() {
 
 function avatarHtml(photoUrl, size) {
     size = size || 40;
+    const placeholder = `<div class="avatar-placeholder" style="width:${size}px;height:${size}px;border-radius:50%;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;font-size:${Math.round(size*0.4)}px;color:var(--text-muted);">?</div>`;
     if (photoUrl) {
-        return `<img src="${withAppBasePath(photoUrl)}" class="avatar" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;">`;
+        const src = photoUrl.startsWith('data:') ? photoUrl : withAppBasePath(photoUrl);
+        return `<img src="${src}" class="avatar" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;" onerror="this.onerror=null;this.src='${AVATAR_FALLBACK_SRC}'">`;
     }
-    return `<div class="avatar-placeholder" style="width:${size}px;height:${size}px;border-radius:50%;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;font-size:${Math.round(size*0.4)}px;color:var(--text-muted);">?</div>`;
+    return placeholder;
 }
 
 // ===== Navigation =====
@@ -2100,10 +2106,12 @@ async function loadProfile() {
 async function uploadProfilePhoto(input) {
     if (!input.files || !input.files[0]) return;
 
-    const formData = new FormData();
-    formData.append('photo', input.files[0]);
-
     try {
+        const file = input.files[0];
+        const resizedBlob = await resizeImageToBlob(file, 200);
+        const formData = new FormData();
+        formData.append('photo', resizedBlob, 'avatar.jpg');
+
         const result = await apiUpload('/auth/profile-photo', formData);
         setPlayer(result.player);
         syncPlayerCaches(result.player);
@@ -2112,6 +2120,35 @@ async function uploadProfilePhoto(input) {
     } catch (err) {
         showToast(err.message, 'error');
     }
+}
+
+function resizeImageToBlob(file, maxSize) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        const objectUrl = URL.createObjectURL(file);
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            let w = img.width, h = img.height;
+            if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
+            else { w = Math.round(w * maxSize / h); h = maxSize; }
+            canvas.width = w;
+            canvas.height = h;
+            canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+            canvas.toBlob((blob) => {
+                URL.revokeObjectURL(objectUrl);
+                if (!blob) {
+                    reject(new Error('Impossible de convertir l\'image'));
+                    return;
+                }
+                resolve(blob);
+            }, 'image/jpeg', 0.8);
+        };
+        img.onerror = () => {
+            URL.revokeObjectURL(objectUrl);
+            reject(new Error('Impossible de lire l\'image'));
+        };
+        img.src = objectUrl;
+    });
 }
 
 async function changeDisplayName(e) {
@@ -3048,5 +3085,3 @@ document.addEventListener('DOMContentLoaded', () => {
         showLogin();
     }
 });
-
-

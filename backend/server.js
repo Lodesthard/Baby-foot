@@ -7,12 +7,17 @@ const ensureSchema = require('./config/ensure-schema');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const avatarUploadDir = process.env.AVATAR_UPLOAD_DIR || path.join(__dirname, '..', 'storage', 'avatars');
+const legacyAvatarUploadDir = path.join(__dirname, '..', 'frontend', 'uploads', 'avatars');
 
 app.use(cors());
 app.use(express.json());
 
-// Servir les assets partages et le frontend
+// Servir les assets partages, les avatars et le frontend
 app.use('/assets', express.static(path.join(__dirname, '..', 'assets')));
+app.use('/media/avatars', express.static(avatarUploadDir));
+app.use('/uploads/avatars', express.static(avatarUploadDir));
+app.use('/uploads/avatars', express.static(legacyAvatarUploadDir));
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
 
 // Routes API

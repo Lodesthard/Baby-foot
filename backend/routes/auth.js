@@ -8,19 +8,45 @@ const pool = require('../config/db');
 const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
+const avatarUploadDir = process.env.AVATAR_UPLOAD_DIR || path.join(__dirname, '..', '..', 'storage', 'avatars');
+const legacyAvatarUploadDir = path.join(__dirname, '..', '..', 'frontend', 'uploads', 'avatars');
+const avatarPublicPath = '/media/avatars/';
 
 function hasTrailingWhitespace(value) {
     return /\s+$/.test(String(value || ''));
 }
 
-// Configure multer for profile photo uploads
-const uploadDir = path.join(__dirname, '..', '..', 'frontend', 'uploads', 'avatars');
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
+function ensureDirExists(dirPath) {
+    if (!fs.existsSync(dirPath)) {
+        fs.mkdirSync(dirPath, { recursive: true });
+    }
 }
 
+function getManagedAvatarFileName(photoPath) {
+    const rawPath = String(photoPath || '');
+    if (!rawPath.startsWith('/media/avatars/') && !rawPath.startsWith('/uploads/avatars/')) {
+        return null;
+    }
+    return path.basename(rawPath);
+}
+
+function resolveManagedAvatarPath(photoPath) {
+    const fileName = getManagedAvatarFileName(photoPath);
+    if (!fileName) return null;
+
+    const candidatePaths = [
+        path.join(avatarUploadDir, fileName),
+        path.join(legacyAvatarUploadDir, fileName),
+    ];
+
+    return candidatePaths.find((candidatePath) => fs.existsSync(candidatePath)) || candidatePaths[0];
+}
+
+// Configure multer for profile photo uploads
+ensureDirExists(avatarUploadDir);
+
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
+    destination: (req, file, cb) => cb(null, avatarUploadDir),
     filename: (req, file, cb) => {
         const ext = path.extname(file.originalname).toLowerCase();
         cb(null, `avatar_${req.user.id}_${Date.now()}${ext}`);
@@ -175,11 +201,11 @@ router.post('/profile-photo', authenticateToken, (req, res) => {
             // Delete old photo if exists
             const [oldRows] = await pool.query('SELECT profile_photo FROM players WHERE id = ?', [req.user.id]);
             if (oldRows[0]?.profile_photo) {
-                const oldPath = path.join(__dirname, '..', '..', 'frontend', oldRows[0].profile_photo);
-                if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+                const oldPath = resolveManagedAvatarPath(oldRows[0].profile_photo);
+                if (oldPath && fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
             }
 
-            const photoPath = '/uploads/avatars/' + req.file.filename;
+            const photoPath = avatarPublicPath + req.file.filename;
             await pool.query('UPDATE players SET profile_photo = ? WHERE id = ?', [photoPath, req.user.id]);
 
             const [rows] = await pool.query(
