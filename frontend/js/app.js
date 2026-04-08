@@ -731,6 +731,42 @@ function switchMatchMode(mode) {
     renderMatchForm();
 }
 
+function swapTeams() {
+    if (matchMode === '1v1') {
+        const tmp = selected1v1.player1;
+        selected1v1.player1 = selected1v1.player2;
+        selected1v1.player2 = tmp;
+    } else if (matchMode === 'solo') {
+        const tmpAtk = selectedPlayers['t1-attack'];
+        const tmpDef = selectedPlayers['t1-defense'];
+        selectedPlayers['t1-attack'] = selectedPlayers['t2-attack'];
+        selectedPlayers['t1-defense'] = selectedPlayers['t2-defense'];
+        selectedPlayers['t2-attack'] = tmpAtk;
+        selectedPlayers['t2-defense'] = tmpDef;
+    } else {
+        const tmp = selectedDuos.team1;
+        selectedDuos.team1 = selectedDuos.team2;
+        selectedDuos.team2 = tmp;
+    }
+    const s1 = document.getElementById('score1');
+    const s2 = document.getElementById('score2');
+    if (s1 && s2) {
+        const tmp = s1.value;
+        s1.value = s2.value;
+        s2.value = tmp;
+    }
+    renderTeamsContainer();
+}
+
+function swapPositions(team) {
+    const atkKey = `${team}-attack`;
+    const defKey = `${team}-defense`;
+    const tmp = selectedPlayers[atkKey];
+    selectedPlayers[atkKey] = selectedPlayers[defKey];
+    selectedPlayers[defKey] = tmp;
+    renderTeamsContainer();
+}
+
 function renderTeamsContainer() {
     const container = document.getElementById('match-teams-container');
 
@@ -741,6 +777,9 @@ function renderTeamsContainer() {
                 <div class="form-group">
                     ${render1v1PlayerSearch('player1')}
                 </div>
+            </div>
+            <div class="swap-teams-btn">
+                <button type="button" onclick="swapTeams()" title="Inverser les joueurs">&#8646;</button>
             </div>
             <div class="team-select">
                 <h3>Joueur 2</h3>
@@ -758,16 +797,25 @@ function renderTeamsContainer() {
                     <label>Attaquant</label>
                     ${renderPlayerSearch('t1-attack')}
                 </div>
+                <div class="swap-positions-btn">
+                    <button type="button" onclick="swapPositions('t1')" title="Inverser ATK/DEF">&#8645;</button>
+                </div>
                 <div class="form-group">
                     <label>Defenseur</label>
                     ${renderPlayerSearch('t1-defense')}
                 </div>
+            </div>
+            <div class="swap-teams-btn">
+                <button type="button" onclick="swapTeams()" title="Inverser les equipes">&#8646;</button>
             </div>
             <div class="team-select">
                 <h3>Equipe 2</h3>
                 <div class="form-group">
                     <label>Attaquant</label>
                     ${renderPlayerSearch('t2-attack')}
+                </div>
+                <div class="swap-positions-btn">
+                    <button type="button" onclick="swapPositions('t2')" title="Inverser ATK/DEF">&#8645;</button>
                 </div>
                 <div class="form-group">
                     <label>Defenseur</label>
@@ -781,6 +829,9 @@ function renderTeamsContainer() {
             <div class="team-select">
                 <h3>Equipe 1</h3>
                 <div id="duo-select-1">${renderDuoSelect('team1')}</div>
+            </div>
+            <div class="swap-teams-btn">
+                <button type="button" onclick="swapTeams()" title="Inverser les equipes">&#8646;</button>
             </div>
             <div class="team-select">
                 <h3>Equipe 2</h3>
