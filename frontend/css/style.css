@@ -530,6 +530,60 @@ body {
     margin-bottom: 10px;
 }
 
+.swap-teams-btn {
+    display: flex;
+    justify-content: center;
+    margin: 8px 0;
+    position: relative;
+    z-index: 2;
+}
+
+.swap-teams-btn button {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    font-size: 20px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.swap-teams-btn button:hover {
+    color: var(--gold);
+    border-color: var(--gold);
+}
+
+.swap-positions-btn {
+    display: flex;
+    justify-content: center;
+    margin: 4px 0;
+}
+
+.swap-positions-btn button {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    width: 28px;
+    height: 28px;
+    font-size: 16px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.swap-positions-btn button:hover {
+    color: var(--gold);
+    border-color: var(--gold);
+}
+
 /* ===== Duo Section ===== */
 .duo-card {
     background: linear-gradient(135deg, var(--bg-card) 0%, rgba(200, 170, 110, 0.05) 100%);
