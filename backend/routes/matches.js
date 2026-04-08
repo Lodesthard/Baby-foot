@@ -75,18 +75,21 @@ router.post('/', authenticateToken, async (req, res) => {
         };
 
         // Calcul ELO individuel (attaque et défense)
+        const seasonConfig = {
+            base_k_factor: s.base_k_factor,
+            rank_multiplier: s.rank_multiplier,
+            score_multiplier: s.score_multiplier,
+            duo_rank_multiplier: s.duo_rank_multiplier,
+            loss_multiplier: s.loss_multiplier,
+            win_streak_multiplier: s.win_streak_multiplier,
+            loss_streak_multiplier: s.loss_streak_multiplier,
+            winrate_multiplier: s.winrate_multiplier
+        };
+
         const eloChanges = calculateMatchElo(
             { score_team1, score_team2 },
             ratings,
-            {
-                base_k_factor: s.base_k_factor,
-                rank_multiplier: s.rank_multiplier,
-                score_multiplier: s.score_multiplier,
-                duo_rank_multiplier: s.duo_rank_multiplier,
-                loss_multiplier: s.loss_multiplier,
-                win_streak_multiplier: s.win_streak_multiplier,
-                loss_streak_multiplier: s.loss_streak_multiplier
-            },
+            seasonConfig,
             streaks
         );
 
@@ -113,17 +116,11 @@ router.post('/', authenticateToken, async (req, res) => {
                 ratings.t1_attack.elo_duo, ratings.t1_defense.elo_duo,
                 ratings.t2_attack.elo_duo, ratings.t2_defense.elo_duo,
                 score_team1, score_team2,
-                {
-                    base_k_factor: s.base_k_factor,
-                    rank_multiplier: s.rank_multiplier,
-                    score_multiplier: s.score_multiplier,
-                    duo_rank_multiplier: s.duo_rank_multiplier,
-                    loss_multiplier: s.loss_multiplier,
-                    win_streak_multiplier: s.win_streak_multiplier,
-                    loss_streak_multiplier: s.loss_streak_multiplier
-                },
+                seasonConfig,
                 team1DuoStreak,
-                team2DuoStreak
+                team2DuoStreak,
+                ratings.t1_attack.wins_duo, ratings.t1_attack.losses_duo,
+                ratings.t2_attack.wins_duo, ratings.t2_attack.losses_duo
             );
         }
 
@@ -242,10 +239,13 @@ router.post('/1v1', authenticateToken, async (req, res) => {
                 score_multiplier: s.score_multiplier,
                 loss_multiplier: s.loss_multiplier,
                 win_streak_multiplier: s.win_streak_multiplier,
-                loss_streak_multiplier: s.loss_streak_multiplier
+                loss_streak_multiplier: s.loss_streak_multiplier,
+                winrate_multiplier: s.winrate_multiplier
             },
             p1Wins ? r1.current_win_streak : r1.current_loss_streak,
-            !p1Wins ? r2.current_win_streak : r2.current_loss_streak
+            !p1Wins ? r2.current_win_streak : r2.current_loss_streak,
+            r1.wins_1v1, r1.losses_1v1,
+            r2.wins_1v1, r2.losses_1v1
         );
 
         // Pour 1v1, on utilise team1_attack = player1, team2_attack = player2, defense = meme joueur

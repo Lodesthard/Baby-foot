@@ -66,6 +66,7 @@
             <button data-page="match" onclick="navigate('match')">Match</button>
             <button data-page="rankings" onclick="navigate('rankings')">Classement</button>
             <button data-page="tournaments" onclick="navigate('tournaments')">Tournois</button>
+            <button data-page="chat" onclick="navigate('chat')">Chat</button>
             <button data-page="history" onclick="navigate('history')">Historique</button>
             <button data-page="rules" onclick="navigate('rules')">Reglement</button>
             <button data-page="profile" onclick="navigate('profile')">Profil</button>
@@ -90,6 +91,16 @@
 
         <div id="page-tournaments" class="page">
             <div id="tournaments-content"><div class="loading">Chargement...</div></div>
+        </div>
+
+        <div id="page-chat" class="page">
+            <div id="chat-content" class="chat-container">
+                <div id="chat-messages" class="chat-messages"></div>
+                <form id="chat-form" class="chat-form" onsubmit="sendChatMessage(event)">
+                    <input type="text" id="chat-input" class="chat-input" placeholder="Ecrire un message..." maxlength="500" autocomplete="off">
+                    <button type="submit" class="btn chat-send-btn">Envoyer</button>
+                </form>
+            </div>
         </div>
 
         <div id="page-history" class="page">

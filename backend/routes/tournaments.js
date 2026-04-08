@@ -495,8 +495,12 @@ router.post('/:id/matches/:matchId/result', authenticateToken, requireAdmin, asy
                     score_multiplier: s.score_multiplier,
                     loss_multiplier: s.loss_multiplier,
                     win_streak_multiplier: s.win_streak_multiplier,
-                    loss_streak_multiplier: s.loss_streak_multiplier
-                }
+                    loss_streak_multiplier: s.loss_streak_multiplier,
+                    winrate_multiplier: s.winrate_multiplier
+                },
+                undefined, undefined,
+                r1.wins_1v1, r1.losses_1v1,
+                r2.wins_1v1, r2.losses_1v1
             );
 
             const [matchResult] = await conn.query(
@@ -574,14 +578,18 @@ router.post('/:id/matches/:matchId/result', authenticateToken, requireAdmin, asy
                 duo_rank_multiplier: s.duo_rank_multiplier,
                 loss_multiplier: s.loss_multiplier,
                 win_streak_multiplier: s.win_streak_multiplier,
-                loss_streak_multiplier: s.loss_streak_multiplier
+                loss_streak_multiplier: s.loss_streak_multiplier,
+                winrate_multiplier: s.winrate_multiplier
             };
 
             const eloChanges = calculateMatchElo({ score_team1: score1, score_team2: score2 }, ratings, seasonConfig);
             const duoEloChanges = calculateDuoEloChange(
                 ratings.t1_attack.elo_duo, ratings.t1_defense.elo_duo,
                 ratings.t2_attack.elo_duo, ratings.t2_defense.elo_duo,
-                score1, score2, seasonConfig
+                score1, score2, seasonConfig,
+                0, 0,
+                ratings.t1_attack.wins_duo, ratings.t1_attack.losses_duo,
+                ratings.t2_attack.wins_duo, ratings.t2_attack.losses_duo
             );
 
             const [matchResult] = await conn.query(

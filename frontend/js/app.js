@@ -63,6 +63,12 @@ function formatEloChange(val) {
     return '<span>0</span>';
 }
 
+function fmtCoeff(val) {
+    const n = Number(val);
+    if (!Number.isFinite(n)) return '0';
+    return parseFloat(n.toFixed(6)).toString();
+}
+
 function formatWinrate(wins, losses) {
     const total = wins + losses;
     if (total === 0) return '-';
@@ -231,9 +237,11 @@ function renderSeasonInfo(season) {
     const lossPercent = Math.round(Number(season.loss_multiplier ?? 1) * 100);
     const winStreakPercent = getStreakStepPercent(season, 'win');
     const lossStreakPercent = getStreakStepPercent(season, 'loss');
+    const wrMult = Number(season.winrate_multiplier ?? 0);
+    const wrInfo = wrMult > 0 ? ` | WR: x${fmtCoeff(wrMult)}` : '';
     return `
-        <div class="season-info">K: ${season.base_k_factor} | Duel direct ATK/DEF: x${season.rank_multiplier} | Equipes / Duo: x${season.duo_rank_multiplier} | Score: x${season.score_multiplier} | Defaite: ${lossPercent}% | Serie V:+${winStreakPercent}% | Serie D:+${lossStreakPercent}%</div>
-        <div class="season-info season-info-secondary">Solo : duel direct + ecart cumule des equipes + score + serie. Double : meme logique ATK/DEF + ELO duo selon l'ecart de rang des duos, le score et la serie moyenne. Le coeff defaite regle le pourcentage de points perdus.</div>
+        <div class="season-info">K: ${fmtCoeff(season.base_k_factor)} | Duel direct ATK/DEF: x${fmtCoeff(season.rank_multiplier)} | Equipes / Duo: x${fmtCoeff(season.duo_rank_multiplier)} | Score: x${fmtCoeff(season.score_multiplier)} | Defaite: ${lossPercent}% | Serie V:+${winStreakPercent}% | Serie D:+${lossStreakPercent}%${wrInfo}</div>
+        <div class="season-info season-info-secondary">Solo : duel direct + ecart cumule des equipes + score + serie. Double : meme logique ATK/DEF + ELO duo selon l'ecart de rang des duos, le score et la serie moyenne. Le coeff defaite regle le pourcentage de points perdus.${wrMult > 0 ? ' Le coeff winrate ajuste les gains/pertes selon l\'ecart du WR a 50%.' : ''}</div>
     `;
 }
 
@@ -249,6 +257,7 @@ function renderCoeffHelp(season) {
             <div><strong>Coeff defaite</strong> : pourcentage de points perdus par rapport a la perte normale. Exemple : 0.75 = 75% de la perte standard.</div>
             <div><strong>Serie victoire</strong> : +${winStreakPercent}% par victoire consecutive, capee a 5 piles.</div>
             <div><strong>Serie defaite</strong> : +${lossStreakPercent}% par defaite consecutive, capee a 5 piles.</div>
+            <div><strong>Coeff winrate</strong> : ajuste les gains/pertes ELO selon l'ecart du winrate a 50%. A 0 = desactive. Exemple : x1, un joueur a 70% WR verra ses gains/pertes multiplies par 1.2. Actif apres 5 matchs.</div>
         </div>
     `;
 }
@@ -308,6 +317,7 @@ function navigate(page) {
         case 'match': loadMatchPage(); break;
         case 'rankings': loadRankings(); break;
         case 'tournaments': loadTournaments(); break;
+        case 'chat': loadChat(); break;
         case 'history': loadHistory(); break;
         case 'rules': loadRules(); break;
         case 'profile': loadProfile(); break;
@@ -335,7 +345,7 @@ function showApp() {
     const params = new URLSearchParams(window.location.search);
     const lobbyCode = params.get('lobby');
     if (lobbyCode) {
-        window.history.replaceState({}, '', '/');
+        window.history.replaceState({}, '', APP_BASE_PATH || '/');
         navigate('match');
         setTimeout(() => joinLobbyByCode(lobbyCode), 500);
         return;
@@ -1372,7 +1382,7 @@ async function refreshLobbyView(isSilent) {
     try {
         const [lobby, qr] = await Promise.all([
             api(`/lobbies/${currentLobby}`),
-            api(`/lobbies/${currentLobby}/qr`)
+            api(`/lobbies/${currentLobby}/qr?basePath=${encodeURIComponent(APP_BASE_PATH || '')}`)
         ]);
 
         const me = getPlayer();
@@ -1431,7 +1441,7 @@ async function refreshLobbyView(isSilent) {
                         ? (isCreator ? 'Vous pouvez fermer le lobby et lancer le match quand les deux duos sont en place.' : 'Rejoignez une equipe avec votre duo de saison puis attendez le createur.')
                         : (isCreator ? 'Vous pouvez fermer le lobby et lancer le match.' : 'Rejoignez un role puis attendez que le createur valide le score.')}</div>
                     ${lobby.match_type === 'duo' ? `<div class="lobby-score-help ${lobby.duo_valid ? 'elo-positive' : 'elo-negative'}">${lobby.duo_valid ? 'Chaque equipe contient bien un duo de saison.' : 'Chaque equipe doit etre rejointe par un seul duo de saison.'}</div>` : ''}
-                    <div class="lobby-link-box">${qr.url}</div>
+                    <div class="lobby-link-box">${window.location.origin}${APP_BASE_PATH || ''}/?lobby=${lobby.code}</div>
                 </div>
             </div>
             ${slotsHtml}
@@ -1772,6 +1782,120 @@ function renderRankingList(data) {
         }
     }
     container.innerHTML = html;
+}
+
+// ===== Chat =====
+let chatMessages = [];
+let chatPollingInterval = null;
+let chatOldestId = null;
+
+async function loadChat() {
+    const container = document.getElementById('chat-messages');
+    container.innerHTML = '<div class="loading">Chargement...</div>';
+    chatMessages = [];
+    chatOldestId = null;
+
+    try {
+        const messages = await api('/chat');
+        chatMessages = messages;
+        if (messages.length > 0) {
+            chatOldestId = messages[0].id;
+        }
+        renderChatMessages();
+        scrollChatToBottom();
+    } catch (err) {
+        container.innerHTML = `<div class="empty-state">${err.message}</div>`;
+    }
+
+    startChatPolling();
+}
+
+function startChatPolling() {
+    stopChatPolling();
+    chatPollingInterval = setInterval(async () => {
+        if (currentPage !== 'chat') {
+            stopChatPolling();
+            return;
+        }
+        try {
+            const lastId = chatMessages.length > 0 ? chatMessages[chatMessages.length - 1].id : 0;
+            const newMessages = await api('/chat');
+            const fresh = newMessages.filter(m => m.id > lastId);
+            if (fresh.length > 0) {
+                chatMessages.push(...fresh);
+                renderChatMessages();
+                scrollChatToBottom();
+            }
+        } catch (_) {}
+    }, 3000);
+}
+
+function stopChatPolling() {
+    if (chatPollingInterval) {
+        clearInterval(chatPollingInterval);
+        chatPollingInterval = null;
+    }
+}
+
+function renderChatMessages() {
+    const container = document.getElementById('chat-messages');
+    if (chatMessages.length === 0) {
+        container.innerHTML = '<div class="empty-state">Aucun message. Soyez le premier !</div>';
+        return;
+    }
+
+    const me = getPlayer();
+    let html = '';
+    let lastDate = '';
+
+    for (const m of chatMessages) {
+        const d = new Date(m.created_at);
+        const dateStr = d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        if (dateStr !== lastDate) {
+            html += `<div class="chat-date-separator">${dateStr}</div>`;
+            lastDate = dateStr;
+        }
+
+        const isMe = m.player_id === me?.id;
+        const time = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+        html += `<div class="chat-bubble ${isMe ? 'chat-bubble-me' : 'chat-bubble-other'}">
+            ${!isMe ? `<div class="chat-bubble-header">
+                <span class="chat-author" onclick="showPlayerProfile(${m.player_id})">${escapeHtml(m.display_name)}</span>
+            </div>` : ''}
+            <div class="chat-bubble-text">${escapeHtml(m.message)}</div>
+            <div class="chat-bubble-time">${time}</div>
+        </div>`;
+    }
+
+    container.innerHTML = html;
+}
+
+function scrollChatToBottom() {
+    const container = document.getElementById('chat-messages');
+    if (container) {
+        container.scrollTop = container.scrollHeight;
+    }
+}
+
+async function sendChatMessage(e) {
+    e.preventDefault();
+    const input = document.getElementById('chat-input');
+    const message = input.value.trim();
+    if (!message) return;
+
+    try {
+        const newMsg = await api('/chat', {
+            method: 'POST',
+            body: JSON.stringify({ message })
+        });
+        input.value = '';
+        chatMessages.push(newMsg);
+        renderChatMessages();
+        scrollChatToBottom();
+    } catch (err) {
+        showToast(err.message, true);
+    }
 }
 
 // ===== History (all matches) =====
@@ -2174,13 +2298,14 @@ async function loadAdmin() {
         html += `<form onsubmit="createSeason(event)" style="margin-bottom:16px">
             <div class="form-group"><label>Nouvelle saison</label><input id="new-season-name" placeholder="Nom de la saison" required></div>
             <div class="coeff-grid" style="margin-bottom:12px">
-                <div class="form-group"><label>K Factor</label><input id="new-k" type="number" step="0.01" value="32"></div>
-                <div class="form-group"><label>Duel direct ATK/DEF</label><input id="new-rank" type="number" step="0.01" value="1.5"></div>
-                <div class="form-group"><label>Score Mult</label><input id="new-score" type="number" step="0.01" value="0.1"></div>
-                <div class="form-group"><label>Equipes / Duo</label><input id="new-duo-rank" type="number" step="0.01" value="1.3"></div>
-                <div class="form-group"><label>Coeff defaite</label><input id="new-loss" type="number" step="0.01" min="0" value="1"></div>
-                <div class="form-group"><label>Serie victoire</label><input id="new-win-streak" type="number" step="0.01" min="0" value="0.05"></div>
-                <div class="form-group"><label>Serie defaite</label><input id="new-loss-streak" type="number" step="0.01" min="0" value="0.05"></div>
+                <div class="form-group"><label>K Factor</label><input id="new-k" type="number" step="0.000001" value="32"></div>
+                <div class="form-group"><label>Duel direct ATK/DEF</label><input id="new-rank" type="number" step="0.000001" value="1.5"></div>
+                <div class="form-group"><label>Score Mult</label><input id="new-score" type="number" step="0.000001" value="0.1"></div>
+                <div class="form-group"><label>Equipes / Duo</label><input id="new-duo-rank" type="number" step="0.000001" value="1.3"></div>
+                <div class="form-group"><label>Coeff defaite</label><input id="new-loss" type="number" step="0.000001" min="0" value="1"></div>
+                <div class="form-group"><label>Serie victoire</label><input id="new-win-streak" type="number" step="0.000001" min="0" value="0.05"></div>
+                <div class="form-group"><label>Serie defaite</label><input id="new-loss-streak" type="number" step="0.000001" min="0" value="0.05"></div>
+                <div class="form-group"><label>Coeff winrate</label><input id="new-winrate" type="number" step="0.000001" min="0" value="0"></div>
             </div>
             ${renderCoeffHelp({
                 win_streak_multiplier: 0.05,
@@ -2194,7 +2319,7 @@ async function loadAdmin() {
             html += `<div class="card" style="display:flex;justify-content:space-between;align-items:center">
                 <div>
                     <strong>${s.name}</strong> ${s.is_active ? '<span class="admin-badge">Active</span>' : ''}
-                    <div style="font-size:11px;color:var(--text-muted)">K:${s.base_k_factor} | Duel:${s.rank_multiplier} | Score:${s.score_multiplier} | Equipes/Duo:${s.duo_rank_multiplier} | Defaite:${lossPercent}% | Serie V:+${getStreakStepPercent(s, 'win')}% | Serie D:+${getStreakStepPercent(s, 'loss')}%</div>
+                    <div style="font-size:11px;color:var(--text-muted)">K:${fmtCoeff(s.base_k_factor)} | Duel:${fmtCoeff(s.rank_multiplier)} | Score:${fmtCoeff(s.score_multiplier)} | Equipes/Duo:${fmtCoeff(s.duo_rank_multiplier)} | Defaite:${lossPercent}% | Serie V:+${getStreakStepPercent(s, 'win')}% | Serie D:+${getStreakStepPercent(s, 'loss')}%${Number(s.winrate_multiplier || 0) > 0 ? ` | WR:x${fmtCoeff(s.winrate_multiplier)}` : ''}</div>
                 </div>
                 <div>
                     ${!s.is_active ? `<button class="btn btn-small" onclick="activateSeason(${s.id})">Activer</button>` : ''}
@@ -2211,13 +2336,14 @@ async function loadAdmin() {
                 <form onsubmit="updateCoeffs(event, ${as.id})">
                     <div class="form-group"><label>Nom</label><input id="edit-name" value="${as.name}"></div>
                     <div class="coeff-grid" style="margin-bottom:12px">
-                        <div class="form-group"><label>K Factor</label><input id="edit-k" type="number" step="0.01" value="${as.base_k_factor}"></div>
-                        <div class="form-group"><label>Duel direct ATK/DEF</label><input id="edit-rank" type="number" step="0.01" value="${as.rank_multiplier}"></div>
-                        <div class="form-group"><label>Score Mult</label><input id="edit-score" type="number" step="0.01" value="${as.score_multiplier}"></div>
-                        <div class="form-group"><label>Equipes / Duo</label><input id="edit-duo-rank" type="number" step="0.01" value="${as.duo_rank_multiplier}"></div>
-                        <div class="form-group"><label>Coeff defaite</label><input id="edit-loss" type="number" step="0.01" min="0" value="${as.loss_multiplier ?? 1}"></div>
-                        <div class="form-group"><label>Serie victoire</label><input id="edit-win-streak" type="number" step="0.01" min="0" value="${as.win_streak_multiplier ?? 0.05}"></div>
-                        <div class="form-group"><label>Serie defaite</label><input id="edit-loss-streak" type="number" step="0.01" min="0" value="${as.loss_streak_multiplier ?? 0.05}"></div>
+                        <div class="form-group"><label>K Factor</label><input id="edit-k" type="number" step="0.000001" value="${fmtCoeff(as.base_k_factor)}"></div>
+                        <div class="form-group"><label>Duel direct ATK/DEF</label><input id="edit-rank" type="number" step="0.000001" value="${fmtCoeff(as.rank_multiplier)}"></div>
+                        <div class="form-group"><label>Score Mult</label><input id="edit-score" type="number" step="0.000001" value="${fmtCoeff(as.score_multiplier)}"></div>
+                        <div class="form-group"><label>Equipes / Duo</label><input id="edit-duo-rank" type="number" step="0.000001" value="${fmtCoeff(as.duo_rank_multiplier)}"></div>
+                        <div class="form-group"><label>Coeff defaite</label><input id="edit-loss" type="number" step="0.000001" min="0" value="${fmtCoeff(as.loss_multiplier ?? 1)}"></div>
+                        <div class="form-group"><label>Serie victoire</label><input id="edit-win-streak" type="number" step="0.000001" min="0" value="${fmtCoeff(as.win_streak_multiplier ?? 0.05)}"></div>
+                        <div class="form-group"><label>Serie defaite</label><input id="edit-loss-streak" type="number" step="0.000001" min="0" value="${fmtCoeff(as.loss_streak_multiplier ?? 0.05)}"></div>
+                        <div class="form-group"><label>Coeff winrate</label><input id="edit-winrate" type="number" step="0.000001" min="0" value="${fmtCoeff(as.winrate_multiplier ?? 0)}"></div>
                     </div>
                     ${renderCoeffHelp(as)}
                     <button type="submit" class="btn btn-small">Sauvegarder</button>
@@ -2314,7 +2440,8 @@ async function createSeason(e) {
                 duo_rank_multiplier: parseFloat(document.getElementById('new-duo-rank').value),
                 loss_multiplier: parseFloat(document.getElementById('new-loss').value),
                 win_streak_multiplier: parseFloat(document.getElementById('new-win-streak').value),
-                loss_streak_multiplier: parseFloat(document.getElementById('new-loss-streak').value)
+                loss_streak_multiplier: parseFloat(document.getElementById('new-loss-streak').value),
+                winrate_multiplier: parseFloat(document.getElementById('new-winrate').value)
             })
         });
         await loadAdmin();
@@ -2354,7 +2481,8 @@ async function updateCoeffs(e, id) {
                 duo_rank_multiplier: parseFloat(document.getElementById('edit-duo-rank').value),
                 loss_multiplier: parseFloat(document.getElementById('edit-loss').value),
                 win_streak_multiplier: parseFloat(document.getElementById('edit-win-streak').value),
-                loss_streak_multiplier: parseFloat(document.getElementById('edit-loss-streak').value)
+                loss_streak_multiplier: parseFloat(document.getElementById('edit-loss-streak').value),
+                winrate_multiplier: parseFloat(document.getElementById('edit-winrate').value)
             })
         });
         await loadAdmin();
