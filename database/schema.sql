@@ -14,13 +14,14 @@ CREATE TABLE IF NOT EXISTS seasons (
     start_date DATE NOT NULL,
     end_date DATE DEFAULT NULL,
     is_active TINYINT(1) DEFAULT 0,
-    base_k_factor DECIMAL(6,2) DEFAULT 32.00,
-    rank_multiplier DECIMAL(4,2) DEFAULT 1.50,
-    score_multiplier DECIMAL(4,2) DEFAULT 0.10,
-    duo_rank_multiplier DECIMAL(4,2) DEFAULT 1.30,
-    loss_multiplier DECIMAL(4,2) DEFAULT 1.00,
-    win_streak_multiplier DECIMAL(4,2) DEFAULT 0.05,
-    loss_streak_multiplier DECIMAL(4,2) DEFAULT 0.05,
+    base_k_factor DECIMAL(10,6) DEFAULT 32.000000,
+    rank_multiplier DECIMAL(10,6) DEFAULT 1.50,
+    score_multiplier DECIMAL(10,6) DEFAULT 0.10,
+    duo_rank_multiplier DECIMAL(10,6) DEFAULT 1.30,
+    loss_multiplier DECIMAL(10,6) DEFAULT 1.00,
+    win_streak_multiplier DECIMAL(10,6) DEFAULT 0.05,
+    loss_streak_multiplier DECIMAL(10,6) DEFAULT 0.05,
+    winrate_multiplier DECIMAL(10,6) DEFAULT 0.00,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -183,6 +184,17 @@ CREATE TABLE IF NOT EXISTS elo_history (
     FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE,
     FOREIGN KEY (season_id) REFERENCES seasons(id) ON DELETE CASCADE,
     FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE
+);
+
+-- ============================================
+-- Chat global
+-- ============================================
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    player_id INT NOT NULL,
+    message VARCHAR(500) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
 );
 
 -- ============================================

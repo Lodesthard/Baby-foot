@@ -35,6 +35,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
             loss_multiplier,
             win_streak_multiplier,
             loss_streak_multiplier,
+            winrate_multiplier,
         } = req.body;
 
         if (!name) {
@@ -44,8 +45,9 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
         const [result] = await pool.query(
             `INSERT INTO seasons (
                 name, start_date, base_k_factor, rank_multiplier, score_multiplier,
-                duo_rank_multiplier, loss_multiplier, win_streak_multiplier, loss_streak_multiplier
-            ) VALUES (?, CURDATE(), ?, ?, ?, ?, ?, ?, ?)`,
+                duo_rank_multiplier, loss_multiplier, win_streak_multiplier, loss_streak_multiplier,
+                winrate_multiplier
+            ) VALUES (?, CURDATE(), ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 name,
                 base_k_factor ?? 32,
@@ -55,6 +57,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
                 loss_multiplier ?? 1,
                 win_streak_multiplier ?? 0.05,
                 loss_streak_multiplier ?? 0.05,
+                winrate_multiplier ?? 0,
             ]
         );
 
@@ -95,6 +98,7 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
             loss_multiplier,
             win_streak_multiplier,
             loss_streak_multiplier,
+            winrate_multiplier,
             name,
         } = req.body;
 
@@ -107,6 +111,7 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
                  loss_multiplier = ?,
                  win_streak_multiplier = ?,
                  loss_streak_multiplier = ?,
+                 winrate_multiplier = ?,
                  name = ?
              WHERE id = ?`,
             [
@@ -117,6 +122,7 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
                 loss_multiplier,
                 win_streak_multiplier,
                 loss_streak_multiplier,
+                winrate_multiplier,
                 name,
                 req.params.id,
             ]

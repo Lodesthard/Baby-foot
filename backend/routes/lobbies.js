@@ -216,8 +216,9 @@ router.get('/:id/qr', authenticateToken, async (req, res) => {
             return res.status(404).json({ error: 'Lobby introuvable' });
         }
 
-        const baseUrl = `${req.protocol}://${req.get('host')}`;
-        const lobbyUrl = `${baseUrl}?lobby=${rows[0].code}`;
+        const basePath = req.query.basePath || '';
+        const baseUrl = `${req.protocol}://${req.get('host')}${basePath}`;
+        const lobbyUrl = `${baseUrl}/?lobby=${rows[0].code}`;
         const qrDataUrl = await QRCode.toDataURL(lobbyUrl, {
             width: 300,
             margin: 2,

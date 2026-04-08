@@ -2,27 +2,42 @@ async function ensureSchema(connOrPool) {
     const [seasonColumns] = await connOrPool.query('SHOW COLUMNS FROM seasons');
     const seasonColumnNames = new Set(seasonColumns.map((column) => column.Field));
 
+    // Widen coefficient columns from DECIMAL(4,2) or (6,2) to DECIMAL(10,6)
+    const baseKCol = seasonColumns.find(c => c.Field === 'base_k_factor');
+    if (baseKCol && !baseKCol.Type.includes('10')) {
+        const coeffCols = [
+            'base_k_factor', 'rank_multiplier', 'score_multiplier',
+            'duo_rank_multiplier', 'loss_multiplier',
+            'win_streak_multiplier', 'loss_streak_multiplier', 'winrate_multiplier'
+        ];
+        for (const col of coeffCols) {
+            if (seasonColumnNames.has(col)) {
+                await connOrPool.query(`ALTER TABLE seasons MODIFY COLUMN ${col} DECIMAL(10,6)`);
+            }
+        }
+    }
+
     if (!seasonColumnNames.has('duo_rank_multiplier')) {
         await connOrPool.query(
-            'ALTER TABLE seasons ADD COLUMN duo_rank_multiplier DECIMAL(4,2) DEFAULT 1.30 AFTER score_multiplier'
+            'ALTER TABLE seasons ADD COLUMN duo_rank_multiplier DECIMAL(10,6) DEFAULT 1.30 AFTER score_multiplier'
         );
     }
 
     if (!seasonColumnNames.has('loss_multiplier')) {
         await connOrPool.query(
-            'ALTER TABLE seasons ADD COLUMN loss_multiplier DECIMAL(4,2) DEFAULT 1.00 AFTER duo_rank_multiplier'
+            'ALTER TABLE seasons ADD COLUMN loss_multiplier DECIMAL(10,6) DEFAULT 1.00 AFTER duo_rank_multiplier'
         );
     }
 
     if (!seasonColumnNames.has('win_streak_multiplier')) {
         await connOrPool.query(
-            'ALTER TABLE seasons ADD COLUMN win_streak_multiplier DECIMAL(4,2) DEFAULT 0.05 AFTER loss_multiplier'
+            'ALTER TABLE seasons ADD COLUMN win_streak_multiplier DECIMAL(10,6) DEFAULT 0.05 AFTER loss_multiplier'
         );
     }
 
     if (!seasonColumnNames.has('loss_streak_multiplier')) {
         await connOrPool.query(
-            'ALTER TABLE seasons ADD COLUMN loss_streak_multiplier DECIMAL(4,2) DEFAULT 0.05 AFTER win_streak_multiplier'
+            'ALTER TABLE seasons ADD COLUMN loss_streak_multiplier DECIMAL(10,6) DEFAULT 0.05 AFTER win_streak_multiplier'
         );
     }
 
@@ -132,6 +147,25 @@ async function ensureSchema(connOrPool) {
             updated_by INT NOT NULL,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             FOREIGN KEY (updated_by) REFERENCES players(id)
+        )`);
+    }
+
+    // === winrate_multiplier on seasons ===
+    if (!seasonColumnNames.has('winrate_multiplier')) {
+        await connOrPool.query(
+            'ALTER TABLE seasons ADD COLUMN winrate_multiplier DECIMAL(10,6) DEFAULT 0.00 AFTER loss_streak_multiplier'
+        );
+    }
+
+    // === Chat messages table ===
+    const [chatTables] = await connOrPool.query("SHOW TABLES LIKE 'chat_messages'");
+    if (chatTables.length === 0) {
+        await connOrPool.query(`CREATE TABLE chat_messages (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            player_id INT NOT NULL,
+            message VARCHAR(500) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
         )`);
     }
 
