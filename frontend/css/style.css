@@ -2822,6 +2822,34 @@ textarea {
     white-space: nowrap;
 }
 
+.fab-chat {
+    position: fixed;
+    right: calc(18px + env(safe-area-inset-right, 0px));
+    bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    border: none;
+    background: var(--accent, #4f8cff);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    z-index: 900;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.fab-chat:active {
+    transform: scale(0.92);
+}
+
+.fab-chat.hidden {
+    display: none;
+}
+
 /* ===== Mobile ===== */
 @media (max-width: 640px) {
     .global-rank-banner {

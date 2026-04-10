@@ -312,6 +312,9 @@ function navigate(page) {
 
     currentPage = page;
 
+    const fab = document.getElementById('fab-chat');
+    if (fab) fab.classList.toggle('hidden', page === 'chat');
+
     switch(page) {
         case 'home': loadHome(); break;
         case 'match': loadMatchPage(); break;
