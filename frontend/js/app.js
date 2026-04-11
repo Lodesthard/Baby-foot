@@ -713,7 +713,6 @@ function renderMatchForm() {
             <button class="${matchMode === 'solo' ? 'active' : ''}" onclick="switchMatchMode('solo')">Solo</button>
             <button class="${matchMode === 'duo' ? 'active' : ''}" onclick="switchMatchMode('duo')">Double</button>
         </div>
-        ${renderMatchEloHelp()}
         <form id="match-form" onsubmit="submitMatch(event)">
             <div id="match-teams-container"></div>
             <div class="score-input">
