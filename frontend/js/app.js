@@ -431,7 +431,6 @@ async function loadHome() {
             html += `<div class="season-banner">
                 <div>
                     <div class="season-name">${season.name}</div>
-                    ${renderSeasonInfo(season)}
                 </div>
             </div>`;
         }
