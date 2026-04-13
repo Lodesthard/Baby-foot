@@ -90,11 +90,11 @@ function getStreakBonusPercent(season, type, streakCount) {
 }
 
 function buildGlobalSummary(ratings) {
-    const totalWins = (ratings?.wins_attack || 0) + (ratings?.wins_defense || 0) + (ratings?.wins_1v1 || 0);
-    const totalLosses = (ratings?.losses_attack || 0) + (ratings?.losses_defense || 0) + (ratings?.losses_1v1 || 0);
+    const totalWins = (ratings?.wins_attack || 0) + (ratings?.wins_defense || 0);
+    const totalLosses = (ratings?.losses_attack || 0) + (ratings?.losses_defense || 0);
     const totalGames = totalWins + totalLosses;
     const winrate = totalGames > 0 ? Math.round((totalWins / totalGames) * 100) : 0;
-    const averageElo = Math.round(((ratings?.elo_attack || 0) + (ratings?.elo_defense || 0) + (ratings?.elo_1v1 || 0)) / 3);
+    const averageElo = Math.round(((ratings?.elo_attack || 0) + (ratings?.elo_defense || 0)) / 2);
     const rankName = getRankName(averageElo);
 
     return {
@@ -240,8 +240,8 @@ function renderSeasonInfo(season) {
     const wrMult = Number(season.winrate_multiplier ?? 0);
     const wrInfo = wrMult > 0 ? ` | WR: x${fmtCoeff(wrMult)}` : '';
     return `
-        <div class="season-info">K: ${fmtCoeff(season.base_k_factor)} | Duel direct ATK/DEF: x${fmtCoeff(season.rank_multiplier)} | Equipes / Duo: x${fmtCoeff(season.duo_rank_multiplier)} | Score: x${fmtCoeff(season.score_multiplier)} | Defaite: ${lossPercent}% | Serie V:+${winStreakPercent}% | Serie D:+${lossStreakPercent}%${wrInfo}</div>
-        <div class="season-info season-info-secondary">Solo : duel direct + ecart cumule des equipes + score + serie. Double : meme logique ATK/DEF + ELO duo selon l'ecart de rang des duos, le score et la serie moyenne. Le coeff defaite regle le pourcentage de points perdus.${wrMult > 0 ? ' Le coeff winrate ajuste les gains/pertes selon l\'ecart du WR a 50%.' : ''}</div>
+        <div class="season-info">K: ${fmtCoeff(season.base_k_factor)} | Duel direct ATK/DEF: x${fmtCoeff(season.rank_multiplier)} | Equipes / Duo: x${fmtCoeff(season.duo_rank_multiplier)} | Ecart coequipier: x${fmtCoeff(season.mate_rank_multiplier ?? 1.5)} | Score: x${fmtCoeff(season.score_multiplier)} | Defaite: ${lossPercent}% | Serie V:+${winStreakPercent}% | Serie D:+${lossStreakPercent}%${wrInfo}</div>
+        <div class="season-info season-info-secondary">Solo : duel direct + ecart cumule des equipes + ecart avec le coequipier + score + serie. Double : meme logique ATK/DEF + ELO duo selon l'ecart de rang des duos, le score et la serie moyenne. Le coeff defaite regle le pourcentage de points perdus.${wrMult > 0 ? ' Le coeff winrate ajuste les gains/pertes selon l\'ecart du WR a 50%.' : ''}</div>
     `;
 }
 
@@ -254,6 +254,7 @@ function renderCoeffHelp(season) {
             <div><strong>Duel direct ATK/DEF</strong> : poids de l'ecart entre les deux joueurs directement opposes.</div>
             <div><strong>Score Mult</strong> : poids de l'ecart au score.</div>
             <div><strong>Equipes / Duo</strong> : poids de l'ecart cumule des equipes en ATK/DEF, et de l'ecart de rang entre les deux duos en double.</div>
+            <div><strong>Ecart coequipier</strong> : bonus/malus selon la difference d'ELO avec ton coequipier. Coequipier plus faible = tu gagnes plus et perds moins. Coequipier plus fort = tu gagnes moins et perds plus. A 1 = desactive.</div>
             <div><strong>Coeff defaite</strong> : pourcentage de points perdus par rapport a la perte normale. Exemple : 0.75 = 75% de la perte standard.</div>
             <div><strong>Serie victoire</strong> : +${winStreakPercent}% par victoire consecutive, capee a 5 piles.</div>
             <div><strong>Serie defaite</strong> : +${lossStreakPercent}% par defaite consecutive, capee a 5 piles.</div>
@@ -267,7 +268,7 @@ function renderMatchEloHelp() {
         return `
             <div class="rule-card">
                 <div class="rule-card-title">Regles ELO du double</div>
-                <div class="rule-card-text">ATK / DEF : duel direct + ecart cumule des deux equipes + score + serie.</div>
+                <div class="rule-card-text">ATK / DEF : duel direct + ecart cumule des deux equipes + ecart avec ton coequipier + score + serie.</div>
                 <div class="rule-card-text">ELO duo : ecart de rang entre les deux duos + score + serie moyenne de l'equipe.</div>
             </div>
         `;
@@ -284,7 +285,7 @@ function renderMatchEloHelp() {
     return `
         <div class="rule-card">
             <div class="rule-card-title">Regles ELO du solo</div>
-            <div class="rule-card-text">L'ELO attaque et defense depend du duel direct, de l'ecart cumule des deux equipes, du score et de la serie.</div>
+            <div class="rule-card-text">L'ELO attaque et defense depend du duel direct, de l'ecart cumule des deux equipes, de l'ecart avec ton coequipier, du score et de la serie.</div>
         </div>
     `;
 }
@@ -1748,7 +1749,7 @@ function renderRankingList(data) {
                 ${playerIdentity}
                 <div class="ranking-info">
                     <div class="ranking-name">${r.display_name}</div>
-                    <div class="ranking-record">ATK ${r.elo_attack} | DEF ${r.elo_defense} | 1v1 ${r.elo_1v1} | WR: ${wr}</div>
+                    <div class="ranking-record">ATK ${r.elo_attack} | DEF ${r.elo_defense} | WR: ${wr}</div>
                 </div>
                 <div class="ranking-elo">
                     <div class="elo-value rank-${colorClass}">${r.elo}</div>
@@ -2024,8 +2025,9 @@ async function loadProfile() {
             <div class="profile-hero">
                 <div style="position:relative">
                     ${avatarHtml(me.profile_photo, 72)}
-                    <label for="photo-upload" style="position:absolute;bottom:-4px;right:-4px;background:var(--accent);width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;border:2px solid var(--bg-primary)">+</label>
-                    <input type="file" id="photo-upload" accept="image/*" style="display:none" onchange="uploadProfilePhoto(this)">
+                    <label for="photo-upload" class="photo-upload-btn" style="position:absolute;bottom:-4px;right:-4px;background:var(--accent);width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;border:2px solid var(--bg-primary)">+
+                        <input type="file" id="photo-upload" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;pointer-events:none" onchange="uploadProfilePhoto(this)">
+                    </label>
                 </div>
                 <div class="profile-hero-copy">
                     <div style="font-size:20px;font-weight:800">${me.display_name}</div>
@@ -2098,20 +2100,69 @@ async function loadProfile() {
     }
 }
 
+// Client-side resize + JPEG conversion. Avoids iOS Safari issues with large
+// iPhone photos (over the backend size limit) and HEIC: iOS Safari can decode
+// HEIC natively into a canvas, and we re-export as JPEG regardless of source.
+async function resizeImageToBlob(file, maxDim, quality) {
+    const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('Lecture du fichier impossible'));
+        reader.readAsDataURL(file);
+    });
+
+    const img = await new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("Format d'image non pris en charge"));
+        image.src = dataUrl;
+    });
+
+    let width = img.naturalWidth || img.width;
+    let height = img.naturalHeight || img.height;
+    if (!width || !height) throw new Error("Image illisible");
+
+    if (width > height && width > maxDim) {
+        height = Math.round(height * (maxDim / width));
+        width = maxDim;
+    } else if (height >= width && height > maxDim) {
+        width = Math.round(width * (maxDim / height));
+        height = maxDim;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, width, height);
+
+    return new Promise((resolve, reject) => {
+        canvas.toBlob(
+            (blob) => blob ? resolve(blob) : reject(new Error("Conversion impossible")),
+            'image/jpeg',
+            quality
+        );
+    });
+}
+
 async function uploadProfilePhoto(input) {
     if (!input.files || !input.files[0]) return;
-
-    const formData = new FormData();
-    formData.append('photo', input.files[0]);
+    const file = input.files[0];
 
     try {
+        const blob = await resizeImageToBlob(file, 600, 0.85);
+        const formData = new FormData();
+        formData.append('photo', blob, 'avatar.jpg');
+
         const result = await apiUpload('/auth/profile-photo', formData);
         setPlayer(result.player);
         syncPlayerCaches(result.player);
         showToast('Photo mise a jour');
         loadProfile();
     } catch (err) {
-        showToast(err.message, 'error');
+        showToast(err.message || 'Erreur upload', 'error');
+    } finally {
+        input.value = '';
     }
 }
 
@@ -2303,6 +2354,7 @@ async function loadAdmin() {
                 <div class="form-group"><label>Duel direct ATK/DEF</label><input id="new-rank" type="number" step="0.000001" value="1.5"></div>
                 <div class="form-group"><label>Score Mult</label><input id="new-score" type="number" step="0.000001" value="0.1"></div>
                 <div class="form-group"><label>Equipes / Duo</label><input id="new-duo-rank" type="number" step="0.000001" value="1.3"></div>
+                <div class="form-group"><label>Ecart coequipier</label><input id="new-mate-rank" type="number" step="0.000001" value="1.5"></div>
                 <div class="form-group"><label>Coeff defaite</label><input id="new-loss" type="number" step="0.000001" min="0" value="1"></div>
                 <div class="form-group"><label>Serie victoire</label><input id="new-win-streak" type="number" step="0.000001" min="0" value="0.05"></div>
                 <div class="form-group"><label>Serie defaite</label><input id="new-loss-streak" type="number" step="0.000001" min="0" value="0.05"></div>
@@ -2320,7 +2372,7 @@ async function loadAdmin() {
             html += `<div class="card" style="display:flex;justify-content:space-between;align-items:center">
                 <div>
                     <strong>${s.name}</strong> ${s.is_active ? '<span class="admin-badge">Active</span>' : ''}
-                    <div style="font-size:11px;color:var(--text-muted)">K:${fmtCoeff(s.base_k_factor)} | Duel:${fmtCoeff(s.rank_multiplier)} | Score:${fmtCoeff(s.score_multiplier)} | Equipes/Duo:${fmtCoeff(s.duo_rank_multiplier)} | Defaite:${lossPercent}% | Serie V:+${getStreakStepPercent(s, 'win')}% | Serie D:+${getStreakStepPercent(s, 'loss')}%${Number(s.winrate_multiplier || 0) > 0 ? ` | WR:x${fmtCoeff(s.winrate_multiplier)}` : ''}</div>
+                    <div style="font-size:11px;color:var(--text-muted)">K:${fmtCoeff(s.base_k_factor)} | Duel:${fmtCoeff(s.rank_multiplier)} | Score:${fmtCoeff(s.score_multiplier)} | Equipes/Duo:${fmtCoeff(s.duo_rank_multiplier)} | Mate:${fmtCoeff(s.mate_rank_multiplier ?? 1.5)} | Defaite:${lossPercent}% | Serie V:+${getStreakStepPercent(s, 'win')}% | Serie D:+${getStreakStepPercent(s, 'loss')}%${Number(s.winrate_multiplier || 0) > 0 ? ` | WR:x${fmtCoeff(s.winrate_multiplier)}` : ''}</div>
                 </div>
                 <div>
                     ${!s.is_active ? `<button class="btn btn-small" onclick="activateSeason(${s.id})">Activer</button>` : ''}
@@ -2341,6 +2393,7 @@ async function loadAdmin() {
                         <div class="form-group"><label>Duel direct ATK/DEF</label><input id="edit-rank" type="number" step="0.000001" value="${fmtCoeff(as.rank_multiplier)}"></div>
                         <div class="form-group"><label>Score Mult</label><input id="edit-score" type="number" step="0.000001" value="${fmtCoeff(as.score_multiplier)}"></div>
                         <div class="form-group"><label>Equipes / Duo</label><input id="edit-duo-rank" type="number" step="0.000001" value="${fmtCoeff(as.duo_rank_multiplier)}"></div>
+                        <div class="form-group"><label>Ecart coequipier</label><input id="edit-mate-rank" type="number" step="0.000001" value="${fmtCoeff(as.mate_rank_multiplier ?? 1.5)}"></div>
                         <div class="form-group"><label>Coeff defaite</label><input id="edit-loss" type="number" step="0.000001" min="0" value="${fmtCoeff(as.loss_multiplier ?? 1)}"></div>
                         <div class="form-group"><label>Serie victoire</label><input id="edit-win-streak" type="number" step="0.000001" min="0" value="${fmtCoeff(as.win_streak_multiplier ?? 0.05)}"></div>
                         <div class="form-group"><label>Serie defaite</label><input id="edit-loss-streak" type="number" step="0.000001" min="0" value="${fmtCoeff(as.loss_streak_multiplier ?? 0.05)}"></div>
@@ -2439,6 +2492,7 @@ async function createSeason(e) {
                 rank_multiplier: parseFloat(document.getElementById('new-rank').value),
                 score_multiplier: parseFloat(document.getElementById('new-score').value),
                 duo_rank_multiplier: parseFloat(document.getElementById('new-duo-rank').value),
+                mate_rank_multiplier: parseFloat(document.getElementById('new-mate-rank').value),
                 loss_multiplier: parseFloat(document.getElementById('new-loss').value),
                 win_streak_multiplier: parseFloat(document.getElementById('new-win-streak').value),
                 loss_streak_multiplier: parseFloat(document.getElementById('new-loss-streak').value),
@@ -2480,6 +2534,7 @@ async function updateCoeffs(e, id) {
                 rank_multiplier: parseFloat(document.getElementById('edit-rank').value),
                 score_multiplier: parseFloat(document.getElementById('edit-score').value),
                 duo_rank_multiplier: parseFloat(document.getElementById('edit-duo-rank').value),
+                mate_rank_multiplier: parseFloat(document.getElementById('edit-mate-rank').value),
                 loss_multiplier: parseFloat(document.getElementById('edit-loss').value),
                 win_streak_multiplier: parseFloat(document.getElementById('edit-win-streak').value),
                 loss_streak_multiplier: parseFloat(document.getElementById('edit-loss-streak').value),

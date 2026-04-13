@@ -7,7 +7,7 @@ async function ensureSchema(connOrPool) {
     if (baseKCol && !baseKCol.Type.includes('10')) {
         const coeffCols = [
             'base_k_factor', 'rank_multiplier', 'score_multiplier',
-            'duo_rank_multiplier', 'loss_multiplier',
+            'duo_rank_multiplier', 'mate_rank_multiplier', 'loss_multiplier',
             'win_streak_multiplier', 'loss_streak_multiplier', 'winrate_multiplier'
         ];
         for (const col of coeffCols) {
@@ -15,6 +15,12 @@ async function ensureSchema(connOrPool) {
                 await connOrPool.query(`ALTER TABLE seasons MODIFY COLUMN ${col} DECIMAL(10,6)`);
             }
         }
+    }
+
+    if (!seasonColumnNames.has('mate_rank_multiplier')) {
+        await connOrPool.query(
+            'ALTER TABLE seasons ADD COLUMN mate_rank_multiplier DECIMAL(10,6) DEFAULT 1.50 AFTER duo_rank_multiplier'
+        );
     }
 
     if (!seasonColumnNames.has('duo_rank_multiplier')) {

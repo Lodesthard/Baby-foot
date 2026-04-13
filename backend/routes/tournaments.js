@@ -576,6 +576,7 @@ router.post('/:id/matches/:matchId/result', authenticateToken, requireAdmin, asy
                 rank_multiplier: s.rank_multiplier,
                 score_multiplier: s.score_multiplier,
                 duo_rank_multiplier: s.duo_rank_multiplier,
+                mate_rank_multiplier: s.mate_rank_multiplier,
                 loss_multiplier: s.loss_multiplier,
                 win_streak_multiplier: s.win_streak_multiplier,
                 loss_streak_multiplier: s.loss_streak_multiplier,
