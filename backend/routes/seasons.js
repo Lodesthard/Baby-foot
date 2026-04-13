@@ -32,6 +32,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
             rank_multiplier,
             score_multiplier,
             duo_rank_multiplier,
+            mate_rank_multiplier,
             loss_multiplier,
             win_streak_multiplier,
             loss_streak_multiplier,
@@ -45,15 +46,16 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
         const [result] = await pool.query(
             `INSERT INTO seasons (
                 name, start_date, base_k_factor, rank_multiplier, score_multiplier,
-                duo_rank_multiplier, loss_multiplier, win_streak_multiplier, loss_streak_multiplier,
-                winrate_multiplier
-            ) VALUES (?, CURDATE(), ?, ?, ?, ?, ?, ?, ?, ?)`,
+                duo_rank_multiplier, mate_rank_multiplier, loss_multiplier,
+                win_streak_multiplier, loss_streak_multiplier, winrate_multiplier
+            ) VALUES (?, CURDATE(), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 name,
                 base_k_factor ?? 32,
                 rank_multiplier ?? 1.5,
                 score_multiplier ?? 0.1,
                 duo_rank_multiplier ?? 1.3,
+                mate_rank_multiplier ?? 1.5,
                 loss_multiplier ?? 1,
                 win_streak_multiplier ?? 0.05,
                 loss_streak_multiplier ?? 0.05,
@@ -95,6 +97,7 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
             rank_multiplier,
             score_multiplier,
             duo_rank_multiplier,
+            mate_rank_multiplier,
             loss_multiplier,
             win_streak_multiplier,
             loss_streak_multiplier,
@@ -108,6 +111,7 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
                  rank_multiplier = ?,
                  score_multiplier = ?,
                  duo_rank_multiplier = ?,
+                 mate_rank_multiplier = ?,
                  loss_multiplier = ?,
                  win_streak_multiplier = ?,
                  loss_streak_multiplier = ?,
@@ -119,6 +123,7 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
                 rank_multiplier,
                 score_multiplier,
                 duo_rank_multiplier,
+                mate_rank_multiplier,
                 loss_multiplier,
                 win_streak_multiplier,
                 loss_streak_multiplier,

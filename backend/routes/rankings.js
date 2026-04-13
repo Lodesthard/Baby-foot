@@ -169,7 +169,7 @@ router.get('/1v1', authenticateToken, async (req, res) => {
     }
 });
 
-// Classement global (somme des positions attaque + defense + 1v1)
+// Classement global (attaque + defense uniquement)
 router.get('/global', authenticateToken, async (req, res) => {
     try {
         const seasonId = await getActiveSeasonId();
@@ -182,23 +182,22 @@ router.get('/global', authenticateToken, async (req, res) => {
              FROM player_ratings pr
              JOIN players p ON pr.player_id = p.id
              WHERE pr.season_id = ?
-             ORDER BY (pr.elo_attack + pr.elo_defense + pr.elo_1v1) DESC, p.display_name ASC`,
+             ORDER BY (pr.elo_attack + pr.elo_defense) DESC, p.display_name ASC`,
             [seasonId]
         );
 
         const ranked = rows.map((r, i) => {
-            const totalWins = r.wins_attack + r.wins_defense + r.wins_1v1;
-            const totalLosses = r.losses_attack + r.losses_defense + r.losses_1v1;
+            const totalWins = r.wins_attack + r.wins_defense;
+            const totalLosses = r.losses_attack + r.losses_defense;
             return {
                 position: i + 1,
                 player_id: r.player_id,
                 display_name: r.display_name,
                 profile_photo: r.profile_photo,
-                elo: r.elo_attack + r.elo_defense + r.elo_1v1,
-                rank: getRank(Math.round((r.elo_attack + r.elo_defense + r.elo_1v1) / 3)),
+                elo: r.elo_attack + r.elo_defense,
+                rank: getRank(Math.round((r.elo_attack + r.elo_defense) / 2)),
                 elo_attack: r.elo_attack,
                 elo_defense: r.elo_defense,
-                elo_1v1: r.elo_1v1,
                 wins: totalWins,
                 losses: totalLosses,
             };

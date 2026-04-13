@@ -19,22 +19,38 @@ if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
 
+// Map mimetypes to file extensions so iOS uploads without a usable filename
+// (camera captures, HEIC, canvas-generated blobs named "blob") still land on a
+// proper extension on disk.
+const mimeToExt = {
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/pjpeg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
+    'image/heic': '.heic',
+    'image/heif': '.heif',
+};
+
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
     filename: (req, file, cb) => {
-        const ext = path.extname(file.originalname).toLowerCase();
+        let ext = path.extname(file.originalname || '').toLowerCase();
+        if (!ext && file.mimetype) ext = mimeToExt[file.mimetype.toLowerCase()] || '';
+        if (!ext) ext = '.jpg';
         cb(null, `avatar_${req.user.id}_${Date.now()}${ext}`);
     }
 });
 
 const upload = multer({
     storage,
-    limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
+    limits: { fileSize: 15 * 1024 * 1024 }, // 15MB (iPhone photos peuvent depasser 5-10MB)
     fileFilter: (req, file, cb) => {
-        const allowed = ['.jpg', '.jpeg', '.png', '.webp'];
-        const ext = path.extname(file.originalname).toLowerCase();
-        if (allowed.includes(ext)) cb(null, true);
-        else cb(new Error('Format non supporte. Utilisez JPG, PNG ou WebP.'));
+        const mime = (file.mimetype || '').toLowerCase();
+        if (mime.startsWith('image/') && mime !== 'image/svg+xml') return cb(null, true);
+        const ext = path.extname(file.originalname || '').toLowerCase();
+        if (['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'].includes(ext)) return cb(null, true);
+        cb(new Error('Format non supporte. Utilisez JPG, PNG, WebP ou HEIC.'));
     }
 });
 

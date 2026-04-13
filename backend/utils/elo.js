@@ -69,6 +69,19 @@ function getTierGapMultiplier(tierA, tierB, multiplierValue) {
     return 1 + tierGap * (multiplier - 1) / 8;
 }
 
+// Mate coefficient: applies a directional bonus/malus based on how strong
+// the player is relative to their teammate in the same role elo.
+// Worse mate than you -> bigger wins / smaller losses.
+// Better mate than you -> smaller wins / bigger losses.
+function getMateCoefficient(playerElo, mateElo, multiplierValue, didWin) {
+    const multiplier = getParsedMultiplier(multiplierValue, 1);
+    if (multiplier === 1) return 1;
+    const tierDiff = Math.max(-4, Math.min(4, (playerElo - mateElo) / 400));
+    const sign = didWin ? 1 : -1;
+    const coef = 1 + sign * tierDiff * (multiplier - 1) / 4;
+    return Math.max(0.25, Math.min(2.5, coef));
+}
+
 function getScoreBonus(scoreWinner, scoreLoser, scoreMultiplierValue) {
     const scoreMultiplier = getParsedMultiplier(scoreMultiplierValue, 0);
     return 1 + (scoreWinner - scoreLoser) * scoreMultiplier;
@@ -93,7 +106,7 @@ function getWinrateMultiplier(wins, losses, winrateMultiplierValue) {
     return 1 + (winrate - 0.5) * mult;
 }
 
-function calculateRoleDelta(playerElo, opponentElo, ownTeamCumulativeElo, opponentTeamCumulativeElo, didWin, scoreWinner, scoreLoser, seasonConfig, streakCount, playerWins, playerLosses) {
+function calculateRoleDelta(playerElo, opponentElo, mateElo, ownTeamCumulativeElo, opponentTeamCumulativeElo, didWin, scoreWinner, scoreLoser, seasonConfig, streakCount, playerWins, playerLosses) {
     const baseKFactor = getParsedMultiplier(seasonConfig.base_k_factor, 32);
     const lossMultiplier = getLossMultiplier(seasonConfig.loss_multiplier);
     const expectedScore = getExpectedScore(playerElo, opponentElo);
@@ -106,6 +119,12 @@ function calculateRoleDelta(playerElo, opponentElo, ownTeamCumulativeElo, oppone
         getCumulativeRankTier(ownTeamCumulativeElo),
         getCumulativeRankTier(opponentTeamCumulativeElo),
         seasonConfig.duo_rank_multiplier
+    );
+    const mateCoefficient = getMateCoefficient(
+        playerElo,
+        mateElo,
+        seasonConfig.mate_rank_multiplier,
+        didWin
     );
     const scoreBonus = getScoreBonus(scoreWinner, scoreLoser, seasonConfig.score_multiplier);
     const streakMultiplier = getStreakMultiplier(
@@ -122,6 +141,7 @@ function calculateRoleDelta(playerElo, opponentElo, ownTeamCumulativeElo, oppone
         baseDelta
         * directOpponentBonus
         * cumulativeTeamsBonus
+        * mateCoefficient
         * scoreBonus
         * streakMultiplier
         * winrateMultiplier
@@ -148,10 +168,11 @@ function calculateMatchElo(match, ratings, seasonConfig, streaks) {
     const s = streaks || {};
 
     return {
-        // Attaquants : l'opposition directe se fait contre le defenseur adverse.
+        // Attaquants : opposition directe contre le defenseur adverse. Mate = defenseur du meme camp.
         elo_change_t1_attack: calculateRoleDelta(
             t1a.elo_attack,
             t2d.elo_defense,
+            t1d.elo_defense,
             team1CumulativeElo,
             team2CumulativeElo,
             team1Wins,
@@ -164,6 +185,7 @@ function calculateMatchElo(match, ratings, seasonConfig, streaks) {
         elo_change_t2_attack: calculateRoleDelta(
             t2a.elo_attack,
             t1d.elo_defense,
+            t2d.elo_defense,
             team2CumulativeElo,
             team1CumulativeElo,
             !team1Wins,
@@ -174,10 +196,11 @@ function calculateMatchElo(match, ratings, seasonConfig, streaks) {
             t2a.wins_attack, t2a.losses_attack
         ),
 
-        // Defenseurs : l'opposition directe se fait contre l'attaquant adverse.
+        // Defenseurs : opposition directe contre l'attaquant adverse. Mate = attaquant du meme camp.
         elo_change_t1_defense: calculateRoleDelta(
             t1d.elo_defense,
             t2a.elo_attack,
+            t1a.elo_attack,
             team1CumulativeElo,
             team2CumulativeElo,
             team1Wins,
@@ -190,6 +213,7 @@ function calculateMatchElo(match, ratings, seasonConfig, streaks) {
         elo_change_t2_defense: calculateRoleDelta(
             t2d.elo_defense,
             t1a.elo_attack,
+            t2a.elo_attack,
             team2CumulativeElo,
             team1CumulativeElo,
             !team1Wins,

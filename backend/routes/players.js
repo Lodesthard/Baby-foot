@@ -66,7 +66,7 @@ router.get('/:id/stats', authenticateToken, async (req, res) => {
         let globalRank = null;
         if (ratings[0]) {
             const [allRatings] = await pool.query(
-                `SELECT player_id, (elo_attack + elo_defense + elo_1v1) as total_elo
+                `SELECT player_id, (elo_attack + elo_defense) as total_elo
                  FROM player_ratings WHERE season_id = ?
                  ORDER BY total_elo DESC`,
                 [season[0].id]
