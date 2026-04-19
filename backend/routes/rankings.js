@@ -169,8 +169,8 @@ router.get('/1v1', authenticateToken, async (req, res) => {
     }
 });
 
-// Classement global (attaque + defense uniquement)
-router.get('/global', authenticateToken, async (req, res) => {
+// Classement solo (somme des ELO attaque + defense)
+router.get('/solo', authenticateToken, async (req, res) => {
     try {
         const seasonId = await getActiveSeasonId();
         if (!seasonId) return res.json([]);
@@ -198,6 +198,65 @@ router.get('/global', authenticateToken, async (req, res) => {
                 rank: getRank(Math.round((r.elo_attack + r.elo_defense) / 2)),
                 elo_attack: r.elo_attack,
                 elo_defense: r.elo_defense,
+                wins: totalWins,
+                losses: totalLosses,
+            };
+        });
+
+        res.json(ranked);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Classement global reel : somme des ELO attaque, defense, 1v1 et duo.
+// Les joueurs sans duo conservent la valeur par defaut de 1200.
+router.get('/global', authenticateToken, async (req, res) => {
+    try {
+        const seasonId = await getActiveSeasonId();
+        if (!seasonId) return res.json([]);
+
+        await ensureSeasonRatings(seasonId);
+
+        const [rows] = await pool.query(
+            `SELECT pr.*, p.display_name, p.profile_photo,
+                    (SELECT COUNT(*) FROM duos d
+                       WHERE d.season_id = pr.season_id
+                         AND (d.player1_id = pr.player_id OR d.player2_id = pr.player_id)) AS has_duo
+             FROM player_ratings pr
+             JOIN players p ON pr.player_id = p.id
+             WHERE pr.season_id = ?`,
+            [seasonId]
+        );
+
+        const enriched = rows.map((r) => {
+            const duoElo = Number(r.has_duo) > 0 ? r.elo_duo : 1200;
+            const total = r.elo_attack + r.elo_defense + r.elo_1v1 + duoElo;
+            return { row: r, total, duoElo };
+        });
+
+        enriched.sort((a, b) => {
+            if (b.total !== a.total) return b.total - a.total;
+            return (a.row.display_name || '').localeCompare(b.row.display_name || '');
+        });
+
+        const ranked = enriched.map((entry, i) => {
+            const r = entry.row;
+            const totalWins = r.wins_attack + r.wins_defense + r.wins_1v1 + r.wins_duo;
+            const totalLosses = r.losses_attack + r.losses_defense + r.losses_1v1 + r.losses_duo;
+            return {
+                position: i + 1,
+                player_id: r.player_id,
+                display_name: r.display_name,
+                profile_photo: r.profile_photo,
+                elo: entry.total,
+                rank: getRank(Math.round(entry.total / 4)),
+                elo_attack: r.elo_attack,
+                elo_defense: r.elo_defense,
+                elo_1v1: r.elo_1v1,
+                elo_duo: entry.duoElo,
+                has_duo: Number(r.has_duo) > 0,
                 wins: totalWins,
                 losses: totalLosses,
             };

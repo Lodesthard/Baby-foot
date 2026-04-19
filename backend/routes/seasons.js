@@ -24,6 +24,10 @@ router.get('/', authenticateToken, async (req, res) => {
     }
 });
 
+function normalizeAlgorithm(value) {
+    return value === 'trueskill2' ? 'trueskill2' : 'elo';
+}
+
 router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const {
@@ -37,6 +41,13 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
             win_streak_multiplier,
             loss_streak_multiplier,
             winrate_multiplier,
+            algorithm,
+            ts_mu,
+            ts_sigma,
+            ts_beta,
+            ts_tau,
+            ts_scale,
+            ts_score_multiplier,
         } = req.body;
 
         if (!name) {
@@ -47,8 +58,9 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
             `INSERT INTO seasons (
                 name, start_date, base_k_factor, rank_multiplier, score_multiplier,
                 duo_rank_multiplier, mate_rank_multiplier, loss_multiplier,
-                win_streak_multiplier, loss_streak_multiplier, winrate_multiplier
-            ) VALUES (?, CURDATE(), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                win_streak_multiplier, loss_streak_multiplier, winrate_multiplier,
+                algorithm, ts_mu, ts_sigma, ts_beta, ts_tau, ts_scale, ts_score_multiplier
+            ) VALUES (?, CURDATE(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 name,
                 base_k_factor ?? 32,
@@ -60,6 +72,13 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
                 win_streak_multiplier ?? 0.05,
                 loss_streak_multiplier ?? 0.05,
                 winrate_multiplier ?? 0,
+                normalizeAlgorithm(algorithm),
+                ts_mu ?? 25,
+                ts_sigma ?? 25 / 3,
+                ts_beta ?? 25 / 6,
+                ts_tau ?? 25 / 300,
+                ts_scale ?? 48,
+                ts_score_multiplier ?? 0.1,
             ]
         );
 
@@ -102,6 +121,13 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
             win_streak_multiplier,
             loss_streak_multiplier,
             winrate_multiplier,
+            algorithm,
+            ts_mu,
+            ts_sigma,
+            ts_beta,
+            ts_tau,
+            ts_scale,
+            ts_score_multiplier,
             name,
         } = req.body;
 
@@ -116,6 +142,13 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
                  win_streak_multiplier = ?,
                  loss_streak_multiplier = ?,
                  winrate_multiplier = ?,
+                 algorithm = ?,
+                 ts_mu = ?,
+                 ts_sigma = ?,
+                 ts_beta = ?,
+                 ts_tau = ?,
+                 ts_scale = ?,
+                 ts_score_multiplier = ?,
                  name = ?
              WHERE id = ?`,
             [
@@ -128,12 +161,30 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
                 win_streak_multiplier,
                 loss_streak_multiplier,
                 winrate_multiplier,
+                normalizeAlgorithm(algorithm),
+                ts_mu ?? 25,
+                ts_sigma ?? 25 / 3,
+                ts_beta ?? 25 / 6,
+                ts_tau ?? 25 / 300,
+                ts_scale ?? 48,
+                ts_score_multiplier ?? 0.1,
                 name,
                 req.params.id,
             ]
         );
 
         res.json({ message: 'Saison mise a jour' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+router.put('/:id/algorithm', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const algorithm = normalizeAlgorithm(req.body?.algorithm);
+        await pool.query('UPDATE seasons SET algorithm = ? WHERE id = ?', [algorithm, req.params.id]);
+        res.json({ message: 'Algorithme mis a jour', algorithm });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Erreur serveur' });

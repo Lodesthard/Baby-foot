@@ -86,15 +86,28 @@ function getStreakStepPercent(season, type) {
 }
 
 function getStreakBonusPercent(season, type, streakCount) {
-    return Math.round(Math.min(Math.abs(streakCount || 0), 5) * getStreakStepValue(season, type) * 100);
+    return Math.round(Math.max(0, Math.abs(streakCount || 0)) * getStreakStepValue(season, type) * 100);
 }
 
 function buildGlobalSummary(ratings) {
-    const totalWins = (ratings?.wins_attack || 0) + (ratings?.wins_defense || 0);
-    const totalLosses = (ratings?.losses_attack || 0) + (ratings?.losses_defense || 0);
+    const totalWins = (ratings?.wins_attack || 0)
+        + (ratings?.wins_defense || 0)
+        + (ratings?.wins_1v1 || 0)
+        + (ratings?.wins_duo || 0);
+    const totalLosses = (ratings?.losses_attack || 0)
+        + (ratings?.losses_defense || 0)
+        + (ratings?.losses_1v1 || 0)
+        + (ratings?.losses_duo || 0);
     const totalGames = totalWins + totalLosses;
     const winrate = totalGames > 0 ? Math.round((totalWins / totalGames) * 100) : 0;
-    const averageElo = Math.round(((ratings?.elo_attack || 0) + (ratings?.elo_defense || 0)) / 2);
+    const duoElo = (ratings?.wins_duo || 0) + (ratings?.losses_duo || 0) > 0
+        ? (ratings?.elo_duo || 1200)
+        : 1200;
+    const totalElo = (ratings?.elo_attack || 0)
+        + (ratings?.elo_defense || 0)
+        + (ratings?.elo_1v1 || 0)
+        + duoElo;
+    const averageElo = Math.round(totalElo / 4);
     const rankName = getRankName(averageElo);
 
     return {
@@ -103,6 +116,7 @@ function buildGlobalSummary(ratings) {
         totalGames,
         winrate,
         averageElo,
+        totalElo,
         rankName,
         colorClass: getRankColorClass(rankName),
     };
@@ -239,8 +253,9 @@ function renderSeasonInfo(season) {
     const lossStreakPercent = getStreakStepPercent(season, 'loss');
     const wrMult = Number(season.winrate_multiplier ?? 0);
     const wrInfo = wrMult > 0 ? ` | WR: x${fmtCoeff(wrMult)}` : '';
+    const algoLabel = (season.algorithm || 'elo') === 'trueskill2' ? 'TrueSkill2' : 'ELO';
     return `
-        <div class="season-info">K: ${fmtCoeff(season.base_k_factor)} | Duel direct ATK/DEF: x${fmtCoeff(season.rank_multiplier)} | Equipes / Duo: x${fmtCoeff(season.duo_rank_multiplier)} | Ecart coequipier: x${fmtCoeff(season.mate_rank_multiplier ?? 1.5)} | Score: x${fmtCoeff(season.score_multiplier)} | Defaite: ${lossPercent}% | Serie V:+${winStreakPercent}% | Serie D:+${lossStreakPercent}%${wrInfo}</div>
+        <div class="season-info">Algo: ${algoLabel} | K: ${fmtCoeff(season.base_k_factor)} | Duel direct ATK/DEF: x${fmtCoeff(season.rank_multiplier)} | Equipes / Duo: x${fmtCoeff(season.duo_rank_multiplier)} | Ecart coequipier: x${fmtCoeff(season.mate_rank_multiplier ?? 1.5)} | Score: x${fmtCoeff(season.score_multiplier)} | Defaite: ${lossPercent}% | Serie V:+${winStreakPercent}% | Serie D:+${lossStreakPercent}%${wrInfo}</div>
         <div class="season-info season-info-secondary">Solo : duel direct + ecart cumule des equipes + ecart avec le coequipier + score + serie. Double : meme logique ATK/DEF + ELO duo selon l'ecart de rang des duos, le score et la serie moyenne. Le coeff defaite regle le pourcentage de points perdus.${wrMult > 0 ? ' Le coeff winrate ajuste les gains/pertes selon l\'ecart du WR a 50%.' : ''}</div>
     `;
 }
@@ -256,9 +271,22 @@ function renderCoeffHelp(season) {
             <div><strong>Equipes / Duo</strong> : poids de l'ecart cumule des equipes en ATK/DEF, et de l'ecart de rang entre les deux duos en double.</div>
             <div><strong>Ecart coequipier</strong> : bonus/malus selon la difference d'ELO avec ton coequipier. Coequipier plus faible = tu gagnes plus et perds moins. Coequipier plus fort = tu gagnes moins et perds plus. A 1 = desactive.</div>
             <div><strong>Coeff defaite</strong> : pourcentage de points perdus par rapport a la perte normale. Exemple : 0.75 = 75% de la perte standard.</div>
-            <div><strong>Serie victoire</strong> : +${winStreakPercent}% par victoire consecutive, capee a 5 piles.</div>
-            <div><strong>Serie defaite</strong> : +${lossStreakPercent}% par defaite consecutive, capee a 5 piles.</div>
+            <div><strong>Serie victoire</strong> : +${winStreakPercent}% par victoire consecutive (sans limite).</div>
+            <div><strong>Serie defaite</strong> : +${lossStreakPercent}% par defaite consecutive (sans limite).</div>
             <div><strong>Coeff winrate</strong> : ajuste les gains/pertes ELO selon l'ecart du winrate a 50%. A 0 = desactive. Exemple : x1, un joueur a 70% WR verra ses gains/pertes multiplies par 1.2. Actif apres 5 matchs.</div>
+        </div>
+    `;
+}
+
+function renderTsCoeffHelp() {
+    return `
+        <div class="coeff-help">
+            <div><strong>TS mu initial</strong> : niveau estime de depart d'un joueur (moyenne de sa competence). Valeur standard : 25. Tout nouveau joueur commence a ce niveau.</div>
+            <div><strong>TS sigma initial</strong> : incertitude de depart sur le niveau. Plus sigma est grand, plus l'algorithme ajuste vite le classement d'un nouveau joueur. Standard : mu/3 (~8.33).</div>
+            <div><strong>TS beta</strong> : bruit de performance, c'est l'ecart de skill attendu pour un resultat serre 50/50. Plus beta est grand, moins une defaite surprise fait bouger les ratings. Standard : sigma/2 (~4.17).</div>
+            <div><strong>TS tau (dynamique)</strong> : derive ajoutee a sigma entre chaque match pour modeliser l'evolution du niveau dans le temps. Plus tau est grand, plus le systeme reste reactif aux progres / baisses de forme. Standard : sigma/100 (~0.083).</div>
+            <div><strong>TS echelle ELO</strong> : facteur de conversion du skill TrueSkill en points ELO affiches. A 48, un ecart d'une unite mu = 48 points ELO. Augmenter cette valeur amplifie les variations visibles a l'ecran.</div>
+            <div><strong>TS bonus score</strong> : poids du score dans l'ajustement TrueSkill2. A 0.1, une victoire nette (10-0) donne +10% sur l'update par rapport a une victoire serree. A 0 = le score n'est pas pris en compte.</div>
         </div>
     `;
 }
@@ -345,6 +373,8 @@ function showApp() {
     const adminBtn = document.querySelector('[data-page="admin"]');
     if (adminBtn) adminBtn.style.display = player?.is_admin ? '' : 'none';
 
+    startChatUnreadPolling();
+
     // Check if we arrived via lobby QR code
     const params = new URLSearchParams(window.location.search);
     const lobbyCode = params.get('lobby');
@@ -411,6 +441,8 @@ function toggleLoginRegister() {
 }
 
 function logout() {
+    stopChatUnreadPolling();
+    updateChatBadge(0);
     clearToken();
     showLogin();
 }
@@ -1640,6 +1672,7 @@ async function loadRankings() {
 function renderRankingTabs() {
     document.getElementById('ranking-tabs').innerHTML = `
         <button class="${rankingType === 'global' ? 'active' : ''}" onclick="switchRanking('global')">Global</button>
+        <button class="${rankingType === 'solo' ? 'active' : ''}" onclick="switchRanking('solo')">Solo</button>
         <button class="${rankingType === 'attack' ? 'active' : ''}" onclick="switchRanking('attack')">Attaque</button>
         <button class="${rankingType === 'defense' ? 'active' : ''}" onclick="switchRanking('defense')">Defense</button>
         <button class="${rankingType === 'duo' ? 'active' : ''}" onclick="switchRanking('duo')">Duo</button>
@@ -1742,6 +1775,21 @@ function renderRankingList(data) {
 
         if (rankingType === 'global') {
             const colorClass = getRankColorClass(r.rank.name);
+            const duoDisplay = Number(r.has_duo) > 0 ? r.elo_duo : '—';
+            html += `<div class="ranking-item${topClass}" ${clickAttr}>
+                <div class="ranking-pos ${posClass}">#${r.position}</div>
+                ${playerIdentity}
+                <div class="ranking-info">
+                    <div class="ranking-name">${r.display_name}</div>
+                    <div class="ranking-record">ATK ${r.elo_attack} · DEF ${r.elo_defense} · 1v1 ${r.elo_1v1} · DUO ${duoDisplay}</div>
+                </div>
+                <div class="ranking-elo">
+                    <div class="elo-value rank-${colorClass}">${r.elo}</div>
+                    <div class="rank-badge badge-${colorClass}">${r.rank.name}</div>
+                </div>
+            </div>`;
+        } else if (rankingType === 'solo') {
+            const colorClass = getRankColorClass(r.rank.name);
             const total = (r.wins || 0) + (r.losses || 0);
             const wr = total > 0 ? Math.round(((r.wins || 0) / total) * 100) + '%' : '-';
             html += `<div class="ranking-item${topClass}" ${clickAttr}>
@@ -1805,11 +1853,56 @@ async function loadChat() {
         }
         renderChatMessages();
         scrollChatToBottom();
+        markChatRead();
     } catch (err) {
         container.innerHTML = `<div class="empty-state">${err.message}</div>`;
     }
 
     startChatPolling();
+}
+
+async function markChatRead() {
+    try {
+        await api('/chat/mark-read', { method: 'POST' });
+        updateChatBadge(0);
+    } catch (_) {}
+}
+
+let chatUnreadPollingInterval = null;
+
+function updateChatBadge(count) {
+    const badge = document.getElementById('fab-chat-badge');
+    if (!badge) return;
+    if (count > 0) {
+        badge.textContent = count > 99 ? '99+' : String(count);
+        badge.style.display = 'flex';
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+async function refreshChatUnread() {
+    if (currentPage === 'chat') {
+        updateChatBadge(0);
+        return;
+    }
+    try {
+        const data = await api('/chat/unread');
+        updateChatBadge(data?.count || 0);
+    } catch (_) {}
+}
+
+function startChatUnreadPolling() {
+    stopChatUnreadPolling();
+    refreshChatUnread();
+    chatUnreadPollingInterval = setInterval(refreshChatUnread, 15000);
+}
+
+function stopChatUnreadPolling() {
+    if (chatUnreadPollingInterval) {
+        clearInterval(chatUnreadPollingInterval);
+        chatUnreadPollingInterval = null;
+    }
 }
 
 function startChatPolling() {
@@ -1827,6 +1920,7 @@ function startChatPolling() {
                 chatMessages.push(...fresh);
                 renderChatMessages();
                 scrollChatToBottom();
+                markChatRead();
             }
         } catch (_) {}
     }, 3000);
@@ -1942,15 +2036,62 @@ async function loadHistory(page) {
 }
 
 // ===== Rules =====
+function renderAlgorithmSection(season, isAdmin) {
+    const current = (season?.algorithm || 'elo') === 'trueskill2' ? 'trueskill2' : 'elo';
+    const target = current === 'trueskill2' ? 'elo' : 'trueskill2';
+    const currentLabel = current === 'trueskill2' ? 'TrueSkill2' : 'ELO';
+    const targetLabel = target === 'trueskill2' ? 'TrueSkill2' : 'ELO';
+
+    const toggleBtn = isAdmin && season
+        ? `<button class="btn btn-small" onclick="toggleAlgorithm(${season.id}, '${target}')" style="margin-top:10px">Passer en ${targetLabel}</button>`
+        : '';
+
+    return `
+        <div class="section-title">Algorithme de classement</div>
+        <div class="card rules-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                <div>
+                    <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-muted)">Actuellement actif</div>
+                    <div style="font-size:20px;font-weight:800;color:var(--gold)">${currentLabel}</div>
+                </div>
+                ${toggleBtn}
+            </div>
+            <div style="margin-top:12px;font-size:13px;line-height:1.6;color:var(--text-secondary)">
+                <strong style="color:var(--gold-light)">ELO</strong> : systeme classique, chaque joueur a un score unique. Le gain/perte depend de l'ecart d'ELO, du score du match, de la serie et des coefficients de saison. Simple et lisible.
+            </div>
+            <div style="margin-top:8px;font-size:13px;line-height:1.6;color:var(--text-secondary)">
+                <strong style="color:var(--gold-light)">TrueSkill2</strong> : modele bayesien (Microsoft Research) qui represente chaque joueur par une distribution (mu, sigma). Converge plus vite pour les nouveaux joueurs et gere mieux les ecarts de niveau. L'ELO affiche est derive de mu via une echelle de conversion.
+            </div>
+        </div>
+        <div class="coeff-help">
+            <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.8px;color:var(--gold);margin-bottom:4px">Facteurs TrueSkill2</div>
+            <div><strong>mu (moyenne)</strong> : estimation du vrai niveau du joueur. Plus mu est eleve, plus le joueur est fort. Valeur initiale 25.</div>
+            <div><strong>sigma (incertitude)</strong> : confiance du systeme dans l'estimation. Elevee au debut, diminue a chaque match joue. Un joueur avec peu de matchs bouge plus vite.</div>
+            <div><strong>beta (bruit de performance)</strong> : variabilite naturelle d'un match. Plus beta est grand, plus un match donne est considere comme bruite (une defaite impacte moins). Par defaut sigma/2.</div>
+            <div><strong>tau (derive dynamique)</strong> : reinjection d'incertitude entre les matchs pour qu'un joueur inactif puisse re-evoluer. Tau faible = ratings stables, tau fort = plus reactif.</div>
+            <div><strong>Echelle ELO</strong> : facteur de conversion de mu vers l'ELO affiche. Un gain de 1 point de mu donne environ (echelle) points d'ELO.</div>
+            <div><strong>Bonus score</strong> : amplifie l'update selon l'ecart au score du match. 0 = neutre, plus haut = un match serre bouge peu, un match ecrase bouge plus.</div>
+            <div><strong>Role attack / defense / duo / 1v1</strong> : chaque dimension de jeu a ses propres (mu, sigma) independants, comme pour les ELO multiples.</div>
+        </div>
+    `;
+}
+
 async function loadRules() {
     const container = document.getElementById('rules-content');
     container.innerHTML = '<div class="loading">Chargement...</div>';
 
     try {
-        const rules = await api('/rules');
+        const [rules, season] = await Promise.all([
+            api('/rules'),
+            api('/seasons/active'),
+        ]);
         const player = getPlayer();
 
-        let html = `<div class="section-title">Reglement du baby-foot</div>`;
+        let html = '';
+
+        html += renderAlgorithmSection(season, !!player?.is_admin);
+
+        html += `<div class="section-title">Reglement du baby-foot</div>`;
 
         if (rules) {
             html += `<div class="card rules-card">
@@ -2001,6 +2142,21 @@ async function saveRules(e) {
         loadRules();
     } catch (err) {
         errEl.textContent = err.message;
+    }
+}
+
+async function toggleAlgorithm(seasonId, target) {
+    const label = target === 'trueskill2' ? 'TrueSkill2' : 'ELO';
+    if (!confirm(`Basculer l'algorithme de la saison active en ${label} ? Les matchs suivants utiliseront cet algorithme.`)) return;
+    try {
+        await api(`/seasons/${seasonId}/algorithm`, {
+            method: 'PUT',
+            body: JSON.stringify({ algorithm: target })
+        });
+        showToast(`Algorithme bascule en ${label}`);
+        loadRules();
+    } catch (err) {
+        showToast(err.message, 'error');
     }
 }
 
@@ -2349,6 +2505,13 @@ async function loadAdmin() {
         html += `<div class="admin-section"><h2>Saisons</h2>`;
         html += `<form onsubmit="createSeason(event)" style="margin-bottom:16px">
             <div class="form-group"><label>Nouvelle saison</label><input id="new-season-name" placeholder="Nom de la saison" required></div>
+            <div class="form-group">
+                <label>Algorithme</label>
+                <select id="new-algorithm">
+                    <option value="elo" selected>ELO (actuel)</option>
+                    <option value="trueskill2">TrueSkill2</option>
+                </select>
+            </div>
             <div class="coeff-grid" style="margin-bottom:12px">
                 <div class="form-group"><label>K Factor</label><input id="new-k" type="number" step="0.000001" value="32"></div>
                 <div class="form-group"><label>Duel direct ATK/DEF</label><input id="new-rank" type="number" step="0.000001" value="1.5"></div>
@@ -2360,10 +2523,20 @@ async function loadAdmin() {
                 <div class="form-group"><label>Serie defaite</label><input id="new-loss-streak" type="number" step="0.000001" min="0" value="0.05"></div>
                 <div class="form-group"><label>Coeff winrate</label><input id="new-winrate" type="number" step="0.000001" min="0" value="0"></div>
             </div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">Parametres TrueSkill2 (utilises si l'algorithme TrueSkill2 est actif)</div>
+            <div class="coeff-grid" style="margin-bottom:12px">
+                <div class="form-group"><label>TS mu initial</label><input id="new-ts-mu" type="number" step="0.000001" value="25"></div>
+                <div class="form-group"><label>TS sigma initial</label><input id="new-ts-sigma" type="number" step="0.000001" value="8.333333"></div>
+                <div class="form-group"><label>TS beta</label><input id="new-ts-beta" type="number" step="0.000001" value="4.166667"></div>
+                <div class="form-group"><label>TS tau (dynamique)</label><input id="new-ts-tau" type="number" step="0.000001" value="0.083333"></div>
+                <div class="form-group"><label>TS echelle ELO</label><input id="new-ts-scale" type="number" step="0.000001" value="48"></div>
+                <div class="form-group"><label>TS bonus score</label><input id="new-ts-score" type="number" step="0.000001" min="0" value="0.1"></div>
+            </div>
             ${renderCoeffHelp({
                 win_streak_multiplier: 0.05,
                 loss_streak_multiplier: 0.05
             })}
+            ${renderTsCoeffHelp()}
             <button type="submit" class="btn btn-small">Creer la saison</button>
         </form>`;
 
@@ -2372,7 +2545,7 @@ async function loadAdmin() {
             html += `<div class="card" style="display:flex;justify-content:space-between;align-items:center">
                 <div>
                     <strong>${s.name}</strong> ${s.is_active ? '<span class="admin-badge">Active</span>' : ''}
-                    <div style="font-size:11px;color:var(--text-muted)">K:${fmtCoeff(s.base_k_factor)} | Duel:${fmtCoeff(s.rank_multiplier)} | Score:${fmtCoeff(s.score_multiplier)} | Equipes/Duo:${fmtCoeff(s.duo_rank_multiplier)} | Mate:${fmtCoeff(s.mate_rank_multiplier ?? 1.5)} | Defaite:${lossPercent}% | Serie V:+${getStreakStepPercent(s, 'win')}% | Serie D:+${getStreakStepPercent(s, 'loss')}%${Number(s.winrate_multiplier || 0) > 0 ? ` | WR:x${fmtCoeff(s.winrate_multiplier)}` : ''}</div>
+                    <div style="font-size:11px;color:var(--text-muted)">Algo:${(s.algorithm || 'elo') === 'trueskill2' ? 'TS2' : 'ELO'} | K:${fmtCoeff(s.base_k_factor)} | Duel:${fmtCoeff(s.rank_multiplier)} | Score:${fmtCoeff(s.score_multiplier)} | Equipes/Duo:${fmtCoeff(s.duo_rank_multiplier)} | Mate:${fmtCoeff(s.mate_rank_multiplier ?? 1.5)} | Defaite:${lossPercent}% | Serie V:+${getStreakStepPercent(s, 'win')}% | Serie D:+${getStreakStepPercent(s, 'loss')}%${Number(s.winrate_multiplier || 0) > 0 ? ` | WR:x${fmtCoeff(s.winrate_multiplier)}` : ''}</div>
                 </div>
                 <div>
                     ${!s.is_active ? `<button class="btn btn-small" onclick="activateSeason(${s.id})">Activer</button>` : ''}
@@ -2385,9 +2558,17 @@ async function loadAdmin() {
         // Modifier coefficients saison active
         if (stats.active_season) {
             const as = stats.active_season;
+            const currentAlgo = as.algorithm || 'elo';
             html += `<div class="admin-section"><h2>Coefficients (${as.name})</h2>
                 <form onsubmit="updateCoeffs(event, ${as.id})">
                     <div class="form-group"><label>Nom</label><input id="edit-name" value="${as.name}"></div>
+                    <div class="form-group">
+                        <label>Algorithme</label>
+                        <select id="edit-algorithm">
+                            <option value="elo" ${currentAlgo === 'elo' ? 'selected' : ''}>ELO (actuel)</option>
+                            <option value="trueskill2" ${currentAlgo === 'trueskill2' ? 'selected' : ''}>TrueSkill2</option>
+                        </select>
+                    </div>
                     <div class="coeff-grid" style="margin-bottom:12px">
                         <div class="form-group"><label>K Factor</label><input id="edit-k" type="number" step="0.000001" value="${fmtCoeff(as.base_k_factor)}"></div>
                         <div class="form-group"><label>Duel direct ATK/DEF</label><input id="edit-rank" type="number" step="0.000001" value="${fmtCoeff(as.rank_multiplier)}"></div>
@@ -2399,7 +2580,17 @@ async function loadAdmin() {
                         <div class="form-group"><label>Serie defaite</label><input id="edit-loss-streak" type="number" step="0.000001" min="0" value="${fmtCoeff(as.loss_streak_multiplier ?? 0.05)}"></div>
                         <div class="form-group"><label>Coeff winrate</label><input id="edit-winrate" type="number" step="0.000001" min="0" value="${fmtCoeff(as.winrate_multiplier ?? 0)}"></div>
                     </div>
+                    <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">Parametres TrueSkill2 (utilises si l'algorithme TrueSkill2 est actif)</div>
+                    <div class="coeff-grid" style="margin-bottom:12px">
+                        <div class="form-group"><label>TS mu initial</label><input id="edit-ts-mu" type="number" step="0.000001" value="${fmtCoeff(as.ts_mu ?? 25)}"></div>
+                        <div class="form-group"><label>TS sigma initial</label><input id="edit-ts-sigma" type="number" step="0.000001" value="${fmtCoeff(as.ts_sigma ?? 8.333333)}"></div>
+                        <div class="form-group"><label>TS beta</label><input id="edit-ts-beta" type="number" step="0.000001" value="${fmtCoeff(as.ts_beta ?? 4.166667)}"></div>
+                        <div class="form-group"><label>TS tau (dynamique)</label><input id="edit-ts-tau" type="number" step="0.000001" value="${fmtCoeff(as.ts_tau ?? 0.083333)}"></div>
+                        <div class="form-group"><label>TS echelle ELO</label><input id="edit-ts-scale" type="number" step="0.000001" value="${fmtCoeff(as.ts_scale ?? 48)}"></div>
+                        <div class="form-group"><label>TS bonus score</label><input id="edit-ts-score" type="number" step="0.000001" min="0" value="${fmtCoeff(as.ts_score_multiplier ?? 0.1)}"></div>
+                    </div>
                     ${renderCoeffHelp(as)}
+                    ${renderTsCoeffHelp()}
                     <button type="submit" class="btn btn-small">Sauvegarder</button>
                 </form>
             </div>`;
@@ -2496,7 +2687,14 @@ async function createSeason(e) {
                 loss_multiplier: parseFloat(document.getElementById('new-loss').value),
                 win_streak_multiplier: parseFloat(document.getElementById('new-win-streak').value),
                 loss_streak_multiplier: parseFloat(document.getElementById('new-loss-streak').value),
-                winrate_multiplier: parseFloat(document.getElementById('new-winrate').value)
+                winrate_multiplier: parseFloat(document.getElementById('new-winrate').value),
+                algorithm: document.getElementById('new-algorithm').value,
+                ts_mu: parseFloat(document.getElementById('new-ts-mu').value),
+                ts_sigma: parseFloat(document.getElementById('new-ts-sigma').value),
+                ts_beta: parseFloat(document.getElementById('new-ts-beta').value),
+                ts_tau: parseFloat(document.getElementById('new-ts-tau').value),
+                ts_scale: parseFloat(document.getElementById('new-ts-scale').value),
+                ts_score_multiplier: parseFloat(document.getElementById('new-ts-score').value)
             })
         });
         await loadAdmin();
@@ -2538,7 +2736,14 @@ async function updateCoeffs(e, id) {
                 loss_multiplier: parseFloat(document.getElementById('edit-loss').value),
                 win_streak_multiplier: parseFloat(document.getElementById('edit-win-streak').value),
                 loss_streak_multiplier: parseFloat(document.getElementById('edit-loss-streak').value),
-                winrate_multiplier: parseFloat(document.getElementById('edit-winrate').value)
+                winrate_multiplier: parseFloat(document.getElementById('edit-winrate').value),
+                algorithm: document.getElementById('edit-algorithm').value,
+                ts_mu: parseFloat(document.getElementById('edit-ts-mu').value),
+                ts_sigma: parseFloat(document.getElementById('edit-ts-sigma').value),
+                ts_beta: parseFloat(document.getElementById('edit-ts-beta').value),
+                ts_tau: parseFloat(document.getElementById('edit-ts-tau').value),
+                ts_scale: parseFloat(document.getElementById('edit-ts-scale').value),
+                ts_score_multiplier: parseFloat(document.getElementById('edit-ts-score').value)
             })
         });
         await loadAdmin();
