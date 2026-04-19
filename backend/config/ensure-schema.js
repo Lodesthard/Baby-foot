@@ -163,6 +163,51 @@ async function ensureSchema(connOrPool) {
         );
     }
 
+    // === Algorithm selector + TrueSkill2 params on seasons ===
+    if (!seasonColumnNames.has('algorithm')) {
+        await connOrPool.query(
+            "ALTER TABLE seasons ADD COLUMN algorithm ENUM('elo','trueskill2') NOT NULL DEFAULT 'elo' AFTER winrate_multiplier"
+        );
+    }
+    const tsSeasonCols = [
+        ['ts_mu', 'DECIMAL(10,6) DEFAULT 25.000000'],
+        ['ts_sigma', 'DECIMAL(10,6) DEFAULT 8.333333'],
+        ['ts_beta', 'DECIMAL(10,6) DEFAULT 4.166667'],
+        ['ts_tau', 'DECIMAL(10,6) DEFAULT 0.083333'],
+        ['ts_draw_probability', 'DECIMAL(10,6) DEFAULT 0.000000'],
+        ['ts_scale', 'DECIMAL(10,6) DEFAULT 48.000000'],
+        ['ts_score_multiplier', 'DECIMAL(10,6) DEFAULT 0.100000'],
+    ];
+    for (const [col, def] of tsSeasonCols) {
+        if (!seasonColumnNames.has(col)) {
+            await connOrPool.query(`ALTER TABLE seasons ADD COLUMN ${col} ${def}`);
+        }
+    }
+
+    // === TrueSkill2 per-player state ===
+    const tsRatingCols = [
+        ['ts_mu_attack', 'DECIMAL(10,6) DEFAULT 25.000000'],
+        ['ts_sigma_attack', 'DECIMAL(10,6) DEFAULT 8.333333'],
+        ['ts_mu_defense', 'DECIMAL(10,6) DEFAULT 25.000000'],
+        ['ts_sigma_defense', 'DECIMAL(10,6) DEFAULT 8.333333'],
+        ['ts_mu_duo', 'DECIMAL(10,6) DEFAULT 25.000000'],
+        ['ts_sigma_duo', 'DECIMAL(10,6) DEFAULT 8.333333'],
+        ['ts_mu_1v1', 'DECIMAL(10,6) DEFAULT 25.000000'],
+        ['ts_sigma_1v1', 'DECIMAL(10,6) DEFAULT 8.333333'],
+    ];
+    for (const [col, def] of tsRatingCols) {
+        if (!prColumnNames.has(col)) {
+            await connOrPool.query(`ALTER TABLE player_ratings ADD COLUMN ${col} ${def}`);
+        }
+    }
+
+    // === Chat last-read marker per player ===
+    if (!playerColumnNames.has('chat_last_read_id')) {
+        await connOrPool.query(
+            'ALTER TABLE players ADD COLUMN chat_last_read_id INT NOT NULL DEFAULT 0'
+        );
+    }
+
     // === Chat messages table ===
     const [chatTables] = await connOrPool.query("SHOW TABLES LIKE 'chat_messages'");
     if (chatTables.length === 0) {

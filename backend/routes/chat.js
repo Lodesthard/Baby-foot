@@ -4,6 +4,40 @@ const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Nombre de messages non lus pour le joueur courant
+router.get('/unread', authenticateToken, async (req, res) => {
+    try {
+        const [rows] = await pool.query(
+            `SELECT COUNT(*) AS count
+             FROM chat_messages cm
+             JOIN players p ON p.id = ?
+             WHERE cm.id > p.chat_last_read_id
+               AND cm.player_id <> p.id`,
+            [req.user.id]
+        );
+        res.json({ count: rows[0]?.count || 0 });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Marquer tous les messages comme lus pour le joueur courant
+router.post('/mark-read', authenticateToken, async (req, res) => {
+    try {
+        const [maxRow] = await pool.query('SELECT COALESCE(MAX(id), 0) AS max_id FROM chat_messages');
+        const maxId = maxRow[0]?.max_id || 0;
+        await pool.query(
+            'UPDATE players SET chat_last_read_id = ? WHERE id = ?',
+            [maxId, req.user.id]
+        );
+        res.json({ last_read_id: maxId });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
 // Recuperer les messages (les 50 derniers)
 router.get('/', authenticateToken, async (req, res) => {
     try {

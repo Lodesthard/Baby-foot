@@ -62,13 +62,21 @@ router.get('/:id/stats', authenticateToken, async (req, res) => {
             [req.params.id]
         );
 
-        // Compute global rank position
+        // Compute global rank position (somme des 4 ELO, duo = 1200 si aucun duo)
         let globalRank = null;
         if (ratings[0]) {
             const [allRatings] = await pool.query(
-                `SELECT player_id, (elo_attack + elo_defense) as total_elo
-                 FROM player_ratings WHERE season_id = ?
-                 ORDER BY total_elo DESC`,
+                `SELECT pr.player_id,
+                        (pr.elo_attack + pr.elo_defense + pr.elo_1v1 +
+                         CASE WHEN EXISTS (
+                                SELECT 1 FROM duos d
+                                WHERE d.season_id = pr.season_id
+                                  AND (d.player1_id = pr.player_id OR d.player2_id = pr.player_id)
+                              ) THEN pr.elo_duo ELSE 1200 END
+                        ) AS total_elo
+                 FROM player_ratings pr
+                 WHERE pr.season_id = ?
+                 ORDER BY total_elo DESC, pr.player_id ASC`,
                 [season[0].id]
             );
             const pos = allRatings.findIndex(r => r.player_id === parseInt(req.params.id));

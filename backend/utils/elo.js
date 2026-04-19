@@ -88,9 +88,10 @@ function getScoreBonus(scoreWinner, scoreLoser, scoreMultiplierValue) {
 }
 
 // Streak coefficient: longer streaks give bigger bonus/penalty.
-// The step comes from season config and is capped at 5 stacks.
+// The step comes from season config. Il n'y a pas de plafond : chaque
+// victoire/defaite consecutive ajoute un palier au bonus.
 function getStreakMultiplier(streak, stepMultiplierValue) {
-    const s = Math.min(Math.abs(streak), 5);
+    const s = Math.max(0, Math.abs(streak));
     return 1 + s * getStreakStepMultiplier(stepMultiplierValue);
 }
 

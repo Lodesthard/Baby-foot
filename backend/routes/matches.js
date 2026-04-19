@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../config/db');
 const { authenticateToken } = require('../middleware/auth');
 const { calculateMatchElo, calculateDuoEloChange, calculate1v1EloChange } = require('../utils/elo');
+const { calculateMatchTrueskill, calculateDuoTrueskill, calculate1v1Trueskill } = require('../utils/trueskill');
 const { getRelevantStreakValue } = require('../utils/streaks');
 
 const router = express.Router();
@@ -84,15 +85,40 @@ router.post('/', authenticateToken, async (req, res) => {
             loss_multiplier: s.loss_multiplier,
             win_streak_multiplier: s.win_streak_multiplier,
             loss_streak_multiplier: s.loss_streak_multiplier,
-            winrate_multiplier: s.winrate_multiplier
+            winrate_multiplier: s.winrate_multiplier,
+            algorithm: s.algorithm,
+            ts_mu: s.ts_mu,
+            ts_sigma: s.ts_sigma,
+            ts_beta: s.ts_beta,
+            ts_tau: s.ts_tau,
+            ts_scale: s.ts_scale,
+            ts_score_multiplier: s.ts_score_multiplier,
         };
 
-        const eloChanges = calculateMatchElo(
-            { score_team1, score_team2 },
-            ratings,
-            seasonConfig,
-            streaks
-        );
+        const useTrueskill = s.algorithm === 'trueskill2';
+        let eloChanges;
+        let tsRoleNew = null;
+        if (useTrueskill) {
+            const tsRes = calculateMatchTrueskill(
+                { score_team1, score_team2 },
+                ratings,
+                seasonConfig
+            );
+            eloChanges = {
+                elo_change_t1_attack: tsRes.elo_change_t1_attack,
+                elo_change_t1_defense: tsRes.elo_change_t1_defense,
+                elo_change_t2_attack: tsRes.elo_change_t2_attack,
+                elo_change_t2_defense: tsRes.elo_change_t2_defense,
+            };
+            tsRoleNew = tsRes.ts_new;
+        } else {
+            eloChanges = calculateMatchElo(
+                { score_team1, score_team2 },
+                ratings,
+                seasonConfig,
+                streaks
+            );
+        }
 
         // Vérifier si c'est un match duo
         let isDuo = false;
@@ -109,20 +135,30 @@ router.post('/', authenticateToken, async (req, res) => {
             [s.id, team2_attack, team2_defense, team2_defense, team2_attack]
         );
 
+        let tsDuoNew = null;
         if (duo1.length > 0 && duo2.length > 0) {
             isDuo = true;
-            const team1DuoStreak = getTeamStreak(ratings.t1_attack, ratings.t1_defense, team1Wins);
-            const team2DuoStreak = getTeamStreak(ratings.t2_attack, ratings.t2_defense, !team1Wins);
-            duoEloChanges = calculateDuoEloChange(
-                ratings.t1_attack.elo_duo, ratings.t1_defense.elo_duo,
-                ratings.t2_attack.elo_duo, ratings.t2_defense.elo_duo,
-                score_team1, score_team2,
-                seasonConfig,
-                team1DuoStreak,
-                team2DuoStreak,
-                ratings.t1_attack.wins_duo, ratings.t1_attack.losses_duo,
-                ratings.t2_attack.wins_duo, ratings.t2_attack.losses_duo
-            );
+            if (useTrueskill) {
+                const tsDuoRes = calculateDuoTrueskill(ratings, score_team1, score_team2, seasonConfig);
+                duoEloChanges = {
+                    elo_change_duo_t1: tsDuoRes.elo_change_duo_t1,
+                    elo_change_duo_t2: tsDuoRes.elo_change_duo_t2,
+                };
+                tsDuoNew = tsDuoRes.ts_new;
+            } else {
+                const team1DuoStreak = getTeamStreak(ratings.t1_attack, ratings.t1_defense, team1Wins);
+                const team2DuoStreak = getTeamStreak(ratings.t2_attack, ratings.t2_defense, !team1Wins);
+                duoEloChanges = calculateDuoEloChange(
+                    ratings.t1_attack.elo_duo, ratings.t1_defense.elo_duo,
+                    ratings.t2_attack.elo_duo, ratings.t2_defense.elo_duo,
+                    score_team1, score_team2,
+                    seasonConfig,
+                    team1DuoStreak,
+                    team2DuoStreak,
+                    ratings.t1_attack.wins_duo, ratings.t1_attack.losses_duo,
+                    ratings.t2_attack.wins_duo, ratings.t2_attack.losses_duo
+                );
+            }
         }
 
         // Insérer le match
@@ -162,6 +198,27 @@ router.post('/', authenticateToken, async (req, res) => {
         await updateRating(team1_defense, 0, eloChanges.elo_change_t1_defense, duoEloChanges.elo_change_duo_t1, false, team1Wins);
         await updateRating(team2_attack, eloChanges.elo_change_t2_attack, 0, duoEloChanges.elo_change_duo_t2, true, !team1Wins);
         await updateRating(team2_defense, 0, eloChanges.elo_change_t2_defense, duoEloChanges.elo_change_duo_t2, false, !team1Wins);
+
+        if (useTrueskill && tsRoleNew) {
+            const persistTs = async (playerId, role, state) => {
+                if (!state) return;
+                await conn.query(
+                    `UPDATE player_ratings SET ts_mu_${role} = ?, ts_sigma_${role} = ?
+                     WHERE player_id = ? AND season_id = ?`,
+                    [state.mu, state.sigma, playerId, s.id]
+                );
+            };
+            await persistTs(team1_attack, 'attack', tsRoleNew.t1_attack);
+            await persistTs(team1_defense, 'defense', tsRoleNew.t1_defense);
+            await persistTs(team2_attack, 'attack', tsRoleNew.t2_attack);
+            await persistTs(team2_defense, 'defense', tsRoleNew.t2_defense);
+            if (isDuo && tsDuoNew) {
+                await persistTs(team1_attack, 'duo', tsDuoNew.t1_attack);
+                await persistTs(team1_defense, 'duo', tsDuoNew.t1_defense);
+                await persistTs(team2_attack, 'duo', tsDuoNew.t2_attack);
+                await persistTs(team2_defense, 'duo', tsDuoNew.t2_defense);
+            }
+        }
 
         // Historique ELO
         for (const pid of playerIds) {
@@ -231,23 +288,44 @@ router.post('/1v1', authenticateToken, async (req, res) => {
 
         const p1Wins = score_player1 > score_player2;
 
-        const eloChanges = calculate1v1EloChange(
-            r1.elo_1v1, r2.elo_1v1,
-            score_player1, score_player2,
-            {
-                base_k_factor: s.base_k_factor,
-                rank_multiplier: s.rank_multiplier,
-                score_multiplier: s.score_multiplier,
-                loss_multiplier: s.loss_multiplier,
-                win_streak_multiplier: s.win_streak_multiplier,
-                loss_streak_multiplier: s.loss_streak_multiplier,
-                winrate_multiplier: s.winrate_multiplier
-            },
-            p1Wins ? r1.current_win_streak : r1.current_loss_streak,
-            !p1Wins ? r2.current_win_streak : r2.current_loss_streak,
-            r1.wins_1v1, r1.losses_1v1,
-            r2.wins_1v1, r2.losses_1v1
-        );
+        const seasonConfig1v1 = {
+            base_k_factor: s.base_k_factor,
+            rank_multiplier: s.rank_multiplier,
+            score_multiplier: s.score_multiplier,
+            loss_multiplier: s.loss_multiplier,
+            win_streak_multiplier: s.win_streak_multiplier,
+            loss_streak_multiplier: s.loss_streak_multiplier,
+            winrate_multiplier: s.winrate_multiplier,
+            algorithm: s.algorithm,
+            ts_mu: s.ts_mu,
+            ts_sigma: s.ts_sigma,
+            ts_beta: s.ts_beta,
+            ts_tau: s.ts_tau,
+            ts_scale: s.ts_scale,
+            ts_score_multiplier: s.ts_score_multiplier,
+        };
+
+        const useTrueskill1v1 = s.algorithm === 'trueskill2';
+        let eloChanges;
+        let ts1v1New = null;
+        if (useTrueskill1v1) {
+            const tsRes = calculate1v1Trueskill(r1, r2, score_player1, score_player2, seasonConfig1v1);
+            eloChanges = {
+                elo_change_1v1_t1: tsRes.elo_change_1v1_t1,
+                elo_change_1v1_t2: tsRes.elo_change_1v1_t2,
+            };
+            ts1v1New = tsRes.ts_new;
+        } else {
+            eloChanges = calculate1v1EloChange(
+                r1.elo_1v1, r2.elo_1v1,
+                score_player1, score_player2,
+                seasonConfig1v1,
+                p1Wins ? r1.current_win_streak : r1.current_loss_streak,
+                !p1Wins ? r2.current_win_streak : r2.current_loss_streak,
+                r1.wins_1v1, r1.losses_1v1,
+                r2.wins_1v1, r2.losses_1v1
+            );
+        }
 
         // Pour 1v1, on utilise team1_attack = player1, team2_attack = player2, defense = meme joueur
         const [matchResult] = await conn.query(
@@ -285,6 +363,19 @@ router.post('/1v1', authenticateToken, async (req, res) => {
              WHERE player_id = ? AND season_id = ?`,
             [eloChanges.elo_change_1v1_t2, !p1Wins ? 1 : 0, !p1Wins ? 0 : 1, player2, s.id]
         );
+
+        if (useTrueskill1v1 && ts1v1New) {
+            await conn.query(
+                `UPDATE player_ratings SET ts_mu_1v1 = ?, ts_sigma_1v1 = ?
+                 WHERE player_id = ? AND season_id = ?`,
+                [ts1v1New.p1.mu, ts1v1New.p1.sigma, player1, s.id]
+            );
+            await conn.query(
+                `UPDATE player_ratings SET ts_mu_1v1 = ?, ts_sigma_1v1 = ?
+                 WHERE player_id = ? AND season_id = ?`,
+                [ts1v1New.p2.mu, ts1v1New.p2.sigma, player2, s.id]
+            );
+        }
 
         // Historique ELO
         for (const pid of [player1, player2]) {
