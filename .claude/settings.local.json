@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -c backend/routes/recaps.js)",
+      "Bash(node -c backend/routes/skins.js)",
+      "Bash(node -c backend/routes/seasons.js)",
+      "Bash(node -c backend/utils/seasonRecap.js)",
+      "Bash(node -c backend/routes/auth.js)",
+      "Bash(node -c routes/lobbies.js)",
+      "Bash(node -c routes/seasons.js)",
+      "Skill(claude-md-management:revise-claude-md)",
+      "Skill(claude-md-management:revise-claude-md:*)"
+    ]
+  }
+}

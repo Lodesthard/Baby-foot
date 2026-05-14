@@ -248,23 +248,27 @@ router.put('/:id/join', authenticateToken, async (req, res) => {
 
         const lobby = rows[0];
 
-        if (lobby.match_type === '1v1') {
-            const validSlots = ['slot_1v1_p1', 'slot_1v1_p2'];
+        // Pour solo et 1v1 : libere tout autre slot ou le joueur est deja place,
+        // refuse si le slot cible est occupe par quelqu un d autre, sinon assigne.
+        const claimSlotForPlayer = async (validSlots) => {
             if (!validSlots.includes(slot)) {
-                return res.status(400).json({ error: 'Slot invalide' });
+                return { error: 'Slot invalide' };
             }
-
             for (const currentSlot of validSlots) {
                 if (lobby[currentSlot] === playerId && currentSlot !== slot) {
                     await pool.query(`UPDATE lobbies SET ${currentSlot} = NULL WHERE id = ?`, [lobbyId]);
                 }
             }
-
             if (lobby[slot] !== null && lobby[slot] !== playerId) {
-                return res.status(400).json({ error: 'Ce slot est deja pris' });
+                return { error: 'Ce slot est deja pris' };
             }
-
             await pool.query(`UPDATE lobbies SET ${slot} = ? WHERE id = ?`, [playerId, lobbyId]);
+            return null;
+        };
+
+        if (lobby.match_type === '1v1') {
+            const err = await claimSlotForPlayer(['slot_1v1_p1', 'slot_1v1_p2']);
+            if (err) return res.status(400).json({ error: err.error });
         } else if (lobby.match_type === 'duo') {
             if (!['team1', 'team2'].includes(slot)) {
                 return res.status(400).json({ error: 'Equipe invalide' });
@@ -307,22 +311,8 @@ router.put('/:id/join', authenticateToken, async (req, res) => {
                 [...updateFields.map((field) => updates[field]), lobbyId]
             );
         } else {
-            const validSlots = ['slot_t1_attack', 'slot_t1_defense', 'slot_t2_attack', 'slot_t2_defense'];
-            if (!validSlots.includes(slot)) {
-                return res.status(400).json({ error: 'Slot invalide' });
-            }
-
-            for (const currentSlot of validSlots) {
-                if (lobby[currentSlot] === playerId && currentSlot !== slot) {
-                    await pool.query(`UPDATE lobbies SET ${currentSlot} = NULL WHERE id = ?`, [lobbyId]);
-                }
-            }
-
-            if (lobby[slot] !== null && lobby[slot] !== playerId) {
-                return res.status(400).json({ error: 'Ce slot est deja pris' });
-            }
-
-            await pool.query(`UPDATE lobbies SET ${slot} = ? WHERE id = ?`, [playerId, lobbyId]);
+            const err = await claimSlotForPlayer(['slot_t1_attack', 'slot_t1_defense', 'slot_t2_attack', 'slot_t2_defense']);
+            if (err) return res.status(400).json({ error: err.error });
         }
 
         const [updated] = await pool.query('SELECT * FROM lobbies WHERE id = ?', [lobbyId]);

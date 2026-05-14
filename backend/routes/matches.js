@@ -13,6 +13,47 @@ function getTeamStreak(ratingA, ratingB, didWin) {
     return Math.round((streakA + streakB) / 2);
 }
 
+// Charge (ou cree) la ligne player_ratings pour la saison donnee.
+async function fetchOrCreateRating(conn, playerId, seasonId) {
+    const [rows] = await conn.query(
+        'SELECT * FROM player_ratings WHERE player_id = ? AND season_id = ?',
+        [playerId, seasonId]
+    );
+    if (rows.length > 0) return rows[0];
+
+    await conn.query(
+        'INSERT INTO player_ratings (player_id, season_id) VALUES (?, ?)',
+        [playerId, seasonId]
+    );
+    const [newRows] = await conn.query(
+        'SELECT * FROM player_ratings WHERE player_id = ? AND season_id = ?',
+        [playerId, seasonId]
+    );
+    return newRows[0];
+}
+
+// Extrait les coefficients de saison utilises par les calculs ELO / TrueSkill2.
+function buildSeasonConfig(season) {
+    return {
+        base_k_factor: season.base_k_factor,
+        rank_multiplier: season.rank_multiplier,
+        score_multiplier: season.score_multiplier,
+        duo_rank_multiplier: season.duo_rank_multiplier,
+        mate_rank_multiplier: season.mate_rank_multiplier,
+        loss_multiplier: season.loss_multiplier,
+        win_streak_multiplier: season.win_streak_multiplier,
+        loss_streak_multiplier: season.loss_streak_multiplier,
+        winrate_multiplier: season.winrate_multiplier,
+        algorithm: season.algorithm,
+        ts_mu: season.ts_mu,
+        ts_sigma: season.ts_sigma,
+        ts_beta: season.ts_beta,
+        ts_tau: season.ts_tau,
+        ts_scale: season.ts_scale,
+        ts_score_multiplier: season.ts_score_multiplier,
+    };
+}
+
 // Enregistrer un match 2v2 (solo ou duo)
 router.post('/', authenticateToken, async (req, res) => {
     const conn = await pool.getConnection();
@@ -38,27 +79,11 @@ router.post('/', authenticateToken, async (req, res) => {
         const s = season[0];
 
         // Récupérer les ratings
-        const getRating = async (playerId) => {
-            const [rows] = await conn.query(
-                'SELECT * FROM player_ratings WHERE player_id = ? AND season_id = ?',
-                [playerId, s.id]
-            );
-            if (rows.length === 0) {
-                await conn.query('INSERT INTO player_ratings (player_id, season_id) VALUES (?, ?)', [playerId, s.id]);
-                const [newRows] = await conn.query(
-                    'SELECT * FROM player_ratings WHERE player_id = ? AND season_id = ?',
-                    [playerId, s.id]
-                );
-                return newRows[0];
-            }
-            return rows[0];
-        };
-
         const ratings = {
-            t1_attack: await getRating(team1_attack),
-            t1_defense: await getRating(team1_defense),
-            t2_attack: await getRating(team2_attack),
-            t2_defense: await getRating(team2_defense),
+            t1_attack: await fetchOrCreateRating(conn, team1_attack, s.id),
+            t1_defense: await fetchOrCreateRating(conn, team1_defense, s.id),
+            t2_attack: await fetchOrCreateRating(conn, team2_attack, s.id),
+            t2_defense: await fetchOrCreateRating(conn, team2_defense, s.id),
         };
 
         const team1Wins = score_team1 > score_team2;
@@ -76,25 +101,7 @@ router.post('/', authenticateToken, async (req, res) => {
         };
 
         // Calcul ELO individuel (attaque et défense)
-        const seasonConfig = {
-            base_k_factor: s.base_k_factor,
-            rank_multiplier: s.rank_multiplier,
-            score_multiplier: s.score_multiplier,
-            duo_rank_multiplier: s.duo_rank_multiplier,
-            mate_rank_multiplier: s.mate_rank_multiplier,
-            loss_multiplier: s.loss_multiplier,
-            win_streak_multiplier: s.win_streak_multiplier,
-            loss_streak_multiplier: s.loss_streak_multiplier,
-            winrate_multiplier: s.winrate_multiplier,
-            algorithm: s.algorithm,
-            ts_mu: s.ts_mu,
-            ts_sigma: s.ts_sigma,
-            ts_beta: s.ts_beta,
-            ts_tau: s.ts_tau,
-            ts_scale: s.ts_scale,
-            ts_score_multiplier: s.ts_score_multiplier,
-        };
-
+        const seasonConfig = buildSeasonConfig(s);
         const useTrueskill = s.algorithm === 'trueskill2';
         let eloChanges;
         let tsRoleNew = null;
@@ -267,44 +274,12 @@ router.post('/1v1', authenticateToken, async (req, res) => {
         }
         const s = season[0];
 
-        const getRating = async (playerId) => {
-            const [rows] = await conn.query(
-                'SELECT * FROM player_ratings WHERE player_id = ? AND season_id = ?',
-                [playerId, s.id]
-            );
-            if (rows.length === 0) {
-                await conn.query('INSERT INTO player_ratings (player_id, season_id) VALUES (?, ?)', [playerId, s.id]);
-                const [newRows] = await conn.query(
-                    'SELECT * FROM player_ratings WHERE player_id = ? AND season_id = ?',
-                    [playerId, s.id]
-                );
-                return newRows[0];
-            }
-            return rows[0];
-        };
-
-        const r1 = await getRating(player1);
-        const r2 = await getRating(player2);
+        const r1 = await fetchOrCreateRating(conn, player1, s.id);
+        const r2 = await fetchOrCreateRating(conn, player2, s.id);
 
         const p1Wins = score_player1 > score_player2;
 
-        const seasonConfig1v1 = {
-            base_k_factor: s.base_k_factor,
-            rank_multiplier: s.rank_multiplier,
-            score_multiplier: s.score_multiplier,
-            loss_multiplier: s.loss_multiplier,
-            win_streak_multiplier: s.win_streak_multiplier,
-            loss_streak_multiplier: s.loss_streak_multiplier,
-            winrate_multiplier: s.winrate_multiplier,
-            algorithm: s.algorithm,
-            ts_mu: s.ts_mu,
-            ts_sigma: s.ts_sigma,
-            ts_beta: s.ts_beta,
-            ts_tau: s.ts_tau,
-            ts_scale: s.ts_scale,
-            ts_score_multiplier: s.ts_score_multiplier,
-        };
-
+        const seasonConfig1v1 = buildSeasonConfig(s);
         const useTrueskill1v1 = s.algorithm === 'trueskill2';
         let eloChanges;
         let ts1v1New = null;

@@ -69,6 +69,85 @@ function fmtCoeff(val) {
     return parseFloat(n.toFixed(6)).toString();
 }
 
+function getAlgorithmLabel(algorithm) {
+    return algorithm === 'trueskill2' ? 'TrueSkill2' : 'ELO';
+}
+
+// Segmented control pour selectionner l algo dans formulaires admin.
+// prefix : "new" ou "edit". current : "elo" | "trueskill2".
+// seasonId : si fourni, le clic persiste immediatement via PUT /seasons/:id/algorithm.
+function renderAlgoSeg(prefix, current, seasonId = null) {
+    const cur = current === 'trueskill2' ? 'trueskill2' : 'elo';
+    const sid = seasonId == null ? 'null' : String(seasonId);
+    const mk = (algo, label, tag) => `
+        <button type="button"
+                class="algo-seg-btn ${cur === algo ? 'is-active' : ''}"
+                data-algo="${algo}"
+                onclick="pickAlgo('${prefix}', '${algo}', this, ${sid})">
+            <span class="algo-seg-name">${label}</span>
+            <span class="algo-seg-tag">${tag}</span>
+        </button>`;
+    return `
+        <div class="algo-seg" id="${prefix}-algorithm-wrap" data-value="${cur}" data-season-id="${sid}">
+            ${mk('elo', 'ELO', 'Classique')}
+            ${mk('trueskill2', 'TrueSkill2', 'Bayesien')}
+        </div>`;
+}
+
+async function pickAlgo(prefix, value, btnEl, seasonId) {
+    const wrap = document.getElementById(`${prefix}-algorithm-wrap`);
+    if (!wrap) return;
+    if (wrap.dataset.value === value) return;
+    if (wrap.dataset.busy === '1') return;
+
+    const previous = wrap.dataset.value;
+    wrap.dataset.value = value;
+    wrap.querySelectorAll('.algo-seg-btn').forEach((b) => {
+        b.classList.toggle('is-active', b === btnEl);
+    });
+
+    // Persist immediatement pour le formulaire d edition (saison existante).
+    if (seasonId != null && Number.isFinite(seasonId)) {
+        wrap.dataset.busy = '1';
+        wrap.classList.add('is-loading');
+        try {
+            const res = await api(`/seasons/${seasonId}/algorithm`, {
+                method: 'PUT',
+                body: JSON.stringify({ algorithm: value })
+            });
+            const confirmed = (res?.algorithm === 'trueskill2') ? 'trueskill2' : 'elo';
+            wrap.dataset.value = confirmed;
+            wrap.querySelectorAll('.algo-seg-btn').forEach((b) => {
+                b.classList.toggle('is-active', b.dataset.algo === confirmed);
+            });
+            showToast(`Algorithme : ${getAlgorithmLabel(confirmed)}`);
+            // Sync picker Rules tab si visible
+            const rulesPicker = document.getElementById(`algo-picker-${seasonId}`);
+            if (rulesPicker) {
+                rulesPicker.dataset.current = confirmed;
+                rulesPicker.querySelectorAll('.algo-card-btn').forEach((b) => {
+                    b.classList.toggle('is-active', b.dataset.algo === confirmed);
+                });
+            }
+        } catch (err) {
+            // Rollback
+            wrap.dataset.value = previous;
+            wrap.querySelectorAll('.algo-seg-btn').forEach((b) => {
+                b.classList.toggle('is-active', b.dataset.algo === previous);
+            });
+            showToast(err?.message || 'Echec', 'error');
+        } finally {
+            wrap.dataset.busy = '';
+            wrap.classList.remove('is-loading');
+        }
+    }
+}
+
+function getPickedAlgo(prefix) {
+    const wrap = document.getElementById(`${prefix}-algorithm-wrap`);
+    return wrap?.dataset.value === 'trueskill2' ? 'trueskill2' : 'elo';
+}
+
 function formatWinrate(wins, losses) {
     const total = wins + losses;
     if (total === 0) return '-';
@@ -90,33 +169,21 @@ function getStreakBonusPercent(season, type, streakCount) {
 }
 
 function buildGlobalSummary(ratings) {
-    const totalWins = (ratings?.wins_attack || 0)
-        + (ratings?.wins_defense || 0)
-        + (ratings?.wins_1v1 || 0)
-        + (ratings?.wins_duo || 0);
-    const totalLosses = (ratings?.losses_attack || 0)
-        + (ratings?.losses_defense || 0)
-        + (ratings?.losses_1v1 || 0)
-        + (ratings?.losses_duo || 0);
+    const r = ratings || {};
+    const totalWins = (r.wins_attack || 0) + (r.wins_defense || 0) + (r.wins_1v1 || 0) + (r.wins_duo || 0);
+    const totalLosses = (r.losses_attack || 0) + (r.losses_defense || 0) + (r.losses_1v1 || 0) + (r.losses_duo || 0);
     const totalGames = totalWins + totalLosses;
     const winrate = totalGames > 0 ? Math.round((totalWins / totalGames) * 100) : 0;
-    const duoElo = (ratings?.wins_duo || 0) + (ratings?.losses_duo || 0) > 0
-        ? (ratings?.elo_duo || 1200)
-        : 1200;
-    const totalElo = (ratings?.elo_attack || 0)
-        + (ratings?.elo_defense || 0)
-        + (ratings?.elo_1v1 || 0)
-        + duoElo;
-    const averageElo = Math.round(totalElo / 4);
+
+    const hasDuo = (r.wins_duo || 0) + (r.losses_duo || 0) > 0;
+    const duoElo = hasDuo ? (r.elo_duo || 1200) : 1200;
+    const averageElo = Math.round(((r.elo_attack || 0) + (r.elo_defense || 0) + (r.elo_1v1 || 0) + duoElo) / 4);
     const rankName = getRankName(averageElo);
 
     return {
         totalWins,
         totalLosses,
-        totalGames,
         winrate,
-        averageElo,
-        totalElo,
         rankName,
         colorClass: getRankColorClass(rankName),
     };
@@ -247,19 +314,6 @@ function syncPlayerCaches(updatedPlayer) {
     });
 }
 
-function renderSeasonInfo(season) {
-    const lossPercent = Math.round(Number(season.loss_multiplier ?? 1) * 100);
-    const winStreakPercent = getStreakStepPercent(season, 'win');
-    const lossStreakPercent = getStreakStepPercent(season, 'loss');
-    const wrMult = Number(season.winrate_multiplier ?? 0);
-    const wrInfo = wrMult > 0 ? ` | WR: x${fmtCoeff(wrMult)}` : '';
-    const algoLabel = (season.algorithm || 'elo') === 'trueskill2' ? 'TrueSkill2' : 'ELO';
-    return `
-        <div class="season-info">Algo: ${algoLabel} | K: ${fmtCoeff(season.base_k_factor)} | Duel direct ATK/DEF: x${fmtCoeff(season.rank_multiplier)} | Equipes / Duo: x${fmtCoeff(season.duo_rank_multiplier)} | Ecart coequipier: x${fmtCoeff(season.mate_rank_multiplier ?? 1.5)} | Score: x${fmtCoeff(season.score_multiplier)} | Defaite: ${lossPercent}% | Serie V:+${winStreakPercent}% | Serie D:+${lossStreakPercent}%${wrInfo}</div>
-        <div class="season-info season-info-secondary">Solo : duel direct + ecart cumule des equipes + ecart avec le coequipier + score + serie. Double : meme logique ATK/DEF + ELO duo selon l'ecart de rang des duos, le score et la serie moyenne. Le coeff defaite regle le pourcentage de points perdus.${wrMult > 0 ? ' Le coeff winrate ajuste les gains/pertes selon l\'ecart du WR a 50%.' : ''}</div>
-    `;
-}
-
 function renderCoeffHelp(season) {
     const winStreakPercent = getStreakStepPercent(season, 'win');
     const lossStreakPercent = getStreakStepPercent(season, 'loss');
@@ -291,40 +345,65 @@ function renderTsCoeffHelp() {
     `;
 }
 
-function renderMatchEloHelp() {
-    if (matchMode === 'duo') {
-        return `
-            <div class="rule-card">
-                <div class="rule-card-title">Regles ELO du double</div>
-                <div class="rule-card-text">ATK / DEF : duel direct + ecart cumule des deux equipes + ecart avec ton coequipier + score + serie.</div>
-                <div class="rule-card-text">ELO duo : ecart de rang entre les deux duos + score + serie moyenne de l'equipe.</div>
-            </div>
-        `;
-    }
-    if (matchMode === '1v1') {
-        return `
-            <div class="rule-card">
-                <div class="rule-card-title">Regles ELO du 1v1</div>
-                <div class="rule-card-text">L'ELO 1v1 depend du duel direct entre les deux joueurs, du score et de la serie.</div>
-            </div>
-        `;
-    }
-
-    return `
-        <div class="rule-card">
-            <div class="rule-card-title">Regles ELO du solo</div>
-            <div class="rule-card-text">L'ELO attaque et defense depend du duel direct, de l'ecart cumule des deux equipes, de l'ecart avec ton coequipier, du score et de la serie.</div>
-        </div>
-    `;
+// Badge titre equipe (renvoie '' si pas de titre)
+function titleBadgeHtml(label, color) {
+    if (!label) return '';
+    const safeLabel = escapeHtml(label);
+    const colorStyle = color ? `color:${escapeHtml(color)};border-color:${escapeHtml(color)}` : '';
+    return `<span class="player-title-badge" style="${colorStyle}">${safeLabel}</span>`;
 }
 
-function avatarHtml(photoUrl, size) {
+function avatarHtml(photoUrl, size, options) {
     size = size || 40;
+    options = options || {};
+    const borderImage = options.borderImage ? withAppBasePath(options.borderImage) : null;
+    const clickable = options.clickable !== false;
+    const onclickAttr = clickable && photoUrl
+        ? ` onclick="openAvatarZoom('${withAppBasePath(photoUrl).replace(/'/g, "\\'")}')"`
+        : '';
+    const cursorClass = clickable && photoUrl ? ' clickable-avatar' : '';
+
+    let inner;
     if (photoUrl) {
-        return `<img src="${withAppBasePath(photoUrl)}" class="avatar" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;">`;
+        inner = `<img src="${withAppBasePath(photoUrl)}" class="avatar${cursorClass}" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;"${onclickAttr}>`;
+    } else {
+        inner = `<div class="avatar-placeholder" style="width:${size}px;height:${size}px;border-radius:50%;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;font-size:${Math.round(size*0.4)}px;color:var(--text-muted);">?</div>`;
     }
-    return `<div class="avatar-placeholder" style="width:${size}px;height:${size}px;border-radius:50%;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;font-size:${Math.round(size*0.4)}px;color:var(--text-muted);">?</div>`;
+
+    if (borderImage) {
+        return `<span class="avatar-with-border" style="width:${size}px;height:${size}px;display:inline-block;vertical-align:middle">${inner}<img src="${borderImage}" class="avatar-border-img" alt=""></span>`;
+    }
+    return inner;
 }
+
+function openAvatarZoom(url) {
+    if (!url) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'avatar-zoom-overlay';
+    overlay.innerHTML = `<img src="${url}" alt="Avatar">`;
+    overlay.addEventListener('click', () => overlay.remove());
+    document.body.appendChild(overlay);
+}
+
+const ALLOWED_THEMES = ['classic', 'mai'];
+
+function applyTheme(theme) {
+    const final = ALLOWED_THEMES.includes(theme) ? theme : 'classic';
+    document.body.setAttribute('data-theme', final);
+    try { localStorage.setItem('bf_theme', final); } catch (e) {}
+}
+
+(function initEarlyTheme() {
+    try {
+        const saved = localStorage.getItem('bf_theme') || 'classic';
+        applyTheme(saved);
+    } catch (e) {}
+    // Theme global est public : on peut le recharger sans token
+    fetch('/api/settings/theme')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => { if (data?.theme) applyTheme(data.theme); })
+        .catch(() => {});
+})();
 
 // ===== Navigation =====
 let currentPage = 'home';
@@ -372,6 +451,9 @@ function showApp() {
 
     const adminBtn = document.querySelector('[data-page="admin"]');
     if (adminBtn) adminBtn.style.display = player?.is_admin ? '' : 'none';
+
+    refreshMeAndTheme();
+    setTimeout(checkPendingRecap, 800);
 
     startChatUnreadPolling();
 
@@ -581,10 +663,11 @@ async function showPlayerProfile(playerId) {
         const p = stats.player;
         const r = stats.ratings;
 
+        const profileTitle = titleBadgeHtml(p.equipped_title_label, p.equipped_title_color);
         let html = `<div class="player-profile-header">
-            <div class="player-profile-avatar">${avatarHtml(p.profile_photo, 64)}</div>
+            <div class="player-profile-avatar">${avatarHtml(p.profile_photo, 64, { borderImage: p.equipped_border_image })}</div>
             <div class="player-profile-headings">
-                <div style="font-size:20px;font-weight:800">${p.display_name}</div>
+                <div style="font-size:20px;font-weight:800">${escapeHtml(p.display_name)}${profileTitle}</div>
                 ${p.identifier ? `<div class="player-profile-identifier">@${p.identifier}</div>` : ''}
                 ${stats.global_rank ? `<div style="font-size:13px;color:var(--text-secondary)">Rang global #${stats.global_rank} / ${stats.total_players}</div>` : ''}
             </div>
@@ -1747,14 +1830,19 @@ function renderRankingList(data) {
             const visual = rankingType === 'duo'
                 ? renderRankIcon(r.rank.name, 68, 'podium-rank-icon')
                 : `<div class="podium-avatar-stack">
-                    ${avatarHtml(r.profile_photo, 42)}
+                    ${avatarHtml(r.profile_photo, 42, { borderImage: r.equipped_border_image, clickable: false })}
                     ${renderRankIcon(r.rank.name, 68, 'podium-rank-icon')}
                 </div>`;
+
+            const podiumTitle = rankingType !== 'duo'
+                ? titleBadgeHtml(r.equipped_title_label, r.equipped_title_color)
+                : '';
 
             html += `<div class="podium-item podium-${i + 1}" ${podiumClickAttr}>
                 <div class="podium-medal">${podiumLabels[i]}</div>
                 <div class="podium-visual">${visual}</div>
                 <div class="podium-name">${name}</div>
+                ${podiumTitle ? `<div style="margin-top:4px">${podiumTitle}</div>` : ''}
                 <div class="podium-elo rank-${colorClass}">${r.elo}</div>
                 <div class="rank-badge badge-${colorClass}">${r.rank.name}</div>
             </div>`;
@@ -1769,9 +1857,13 @@ function renderRankingList(data) {
         const playerIdentity = rankingType === 'duo'
             ? ''
             : `<div class="ranking-player-visual">
-                ${avatarHtml(r.profile_photo, 38)}
+                ${avatarHtml(r.profile_photo, 38, { borderImage: r.equipped_border_image, clickable: false })}
                 ${renderRankIcon(r.rank.name, 48, 'ranking-rank-icon')}
             </div>`;
+
+        const nameWithTitle = rankingType === 'duo'
+            ? ''
+            : `${escapeHtml(r.display_name)}${titleBadgeHtml(r.equipped_title_label, r.equipped_title_color)}`;
 
         if (rankingType === 'global') {
             const colorClass = getRankColorClass(r.rank.name);
@@ -1780,7 +1872,7 @@ function renderRankingList(data) {
                 <div class="ranking-pos ${posClass}">#${r.position}</div>
                 ${playerIdentity}
                 <div class="ranking-info">
-                    <div class="ranking-name">${r.display_name}</div>
+                    <div class="ranking-name">${nameWithTitle}</div>
                     <div class="ranking-record">ATK ${r.elo_attack} · DEF ${r.elo_defense} · 1v1 ${r.elo_1v1} · DUO ${duoDisplay}</div>
                 </div>
                 <div class="ranking-elo">
@@ -1796,7 +1888,7 @@ function renderRankingList(data) {
                 <div class="ranking-pos ${posClass}">#${r.position}</div>
                 ${playerIdentity}
                 <div class="ranking-info">
-                    <div class="ranking-name">${r.display_name}</div>
+                    <div class="ranking-name">${nameWithTitle}</div>
                     <div class="ranking-record">ATK ${r.elo_attack} | DEF ${r.elo_defense} | WR: ${wr}</div>
                 </div>
                 <div class="ranking-elo">
@@ -1814,7 +1906,7 @@ function renderRankingList(data) {
                     ? `<span style="color:var(--gold)">${r.duo_name}</span><br><small style="color:var(--text-muted)">${r.player1_name} & ${r.player2_name}</small>`
                     : `${r.player1_name} & ${r.player2_name}`;
             } else {
-                name = r.display_name;
+                name = nameWithTitle;
             }
 
             html += `<div class="ranking-item${topClass}" ${clickAttr}>
@@ -2038,30 +2130,46 @@ async function loadHistory(page) {
 // ===== Rules =====
 function renderAlgorithmSection(season, isAdmin) {
     const current = (season?.algorithm || 'elo') === 'trueskill2' ? 'trueskill2' : 'elo';
-    const target = current === 'trueskill2' ? 'elo' : 'trueskill2';
-    const currentLabel = current === 'trueskill2' ? 'TrueSkill2' : 'ELO';
-    const targetLabel = target === 'trueskill2' ? 'TrueSkill2' : 'ELO';
 
-    const toggleBtn = isAdmin && season
-        ? `<button class="btn btn-small" onclick="toggleAlgorithm(${season.id}, '${target}')" style="margin-top:10px">Passer en ${targetLabel}</button>`
-        : '';
+    const picker = isAdmin && season
+        ? `
+        <div class="algo-picker" id="algo-picker-${season.id}" data-current="${current}">
+            <button type="button"
+                    class="algo-card-btn ${current === 'elo' ? 'is-active' : ''}"
+                    data-algo="elo"
+                    onclick="switchAlgorithm(${season.id}, 'elo')">
+                <div class="algo-card-head">
+                    <span class="algo-card-name">ELO</span>
+                    <span class="algo-card-check">✓</span>
+                </div>
+                <div class="algo-card-tag">Classique</div>
+            </button>
+            <button type="button"
+                    class="algo-card-btn ${current === 'trueskill2' ? 'is-active' : ''}"
+                    data-algo="trueskill2"
+                    onclick="switchAlgorithm(${season.id}, 'trueskill2')">
+                <div class="algo-card-head">
+                    <span class="algo-card-name">TrueSkill2</span>
+                    <span class="algo-card-check">✓</span>
+                </div>
+                <div class="algo-card-tag">Bayesien (mu / sigma)</div>
+            </button>
+        </div>`
+        : `<div class="algo-current-badge">${getAlgorithmLabel(current)}</div>`;
+
+    const headerLine = isAdmin && season
+        ? `<div class="algo-header-label">Choisis l algorithme actif :</div>`
+        : `<div class="algo-header" style="justify-content:flex-start;gap:14px"><div class="algo-header-label">Actuellement actif</div>${picker}</div>`;
+
+    const pickerBlock = isAdmin && season ? picker : '';
 
     return `
         <div class="section-title">Algorithme de classement</div>
-        <div class="card rules-card">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                <div>
-                    <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-muted)">Actuellement actif</div>
-                    <div style="font-size:20px;font-weight:800;color:var(--gold)">${currentLabel}</div>
-                </div>
-                ${toggleBtn}
-            </div>
-            <div style="margin-top:12px;font-size:13px;line-height:1.6;color:var(--text-secondary)">
-                <strong style="color:var(--gold-light)">ELO</strong> : systeme classique, chaque joueur a un score unique. Le gain/perte depend de l'ecart d'ELO, du score du match, de la serie et des coefficients de saison. Simple et lisible.
-            </div>
-            <div style="margin-top:8px;font-size:13px;line-height:1.6;color:var(--text-secondary)">
-                <strong style="color:var(--gold-light)">TrueSkill2</strong> : modele bayesien (Microsoft Research) qui represente chaque joueur par une distribution (mu, sigma). Converge plus vite pour les nouveaux joueurs et gere mieux les ecarts de niveau. L'ELO affiche est derive de mu via une echelle de conversion.
-            </div>
+        <div class="card rules-card algo-card">
+            ${headerLine}
+            ${pickerBlock}
+            <div class="algo-desc"><strong>ELO</strong> : systeme classique, chaque joueur a un score unique. Le gain/perte depend de l'ecart d'ELO, du score du match, de la serie et des coefficients de saison. Simple et lisible.</div>
+            <div class="algo-desc"><strong>TrueSkill2</strong> : modele bayesien (Microsoft Research) qui represente chaque joueur par une distribution (mu, sigma). Converge plus vite pour les nouveaux joueurs et gere mieux les ecarts de niveau. L'ELO affiche est derive de mu via une echelle de conversion.</div>
         </div>
         <div class="coeff-help">
             <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.8px;color:var(--gold);margin-bottom:4px">Facteurs TrueSkill2</div>
@@ -2145,20 +2253,48 @@ async function saveRules(e) {
     }
 }
 
-async function toggleAlgorithm(seasonId, target) {
-    const label = target === 'trueskill2' ? 'TrueSkill2' : 'ELO';
+async function switchAlgorithm(seasonId, target) {
+    const picker = document.getElementById(`algo-picker-${seasonId}`);
+    if (!picker) return;
+    if (picker.dataset.current === target) return;          // deja actif
+    if (picker.dataset.busy === '1') return;                // requete en cours
+
+    const label = getAlgorithmLabel(target);
     if (!confirm(`Basculer l'algorithme de la saison active en ${label} ? Les matchs suivants utiliseront cet algorithme.`)) return;
+
+    picker.dataset.busy = '1';
+    picker.classList.add('is-loading');
+
+    // Etat visuel optimiste
+    picker.querySelectorAll('.algo-card-btn').forEach((b) => {
+        b.classList.toggle('is-active', b.dataset.algo === target);
+    });
+
     try {
-        await api(`/seasons/${seasonId}/algorithm`, {
+        const res = await api(`/seasons/${seasonId}/algorithm`, {
             method: 'PUT',
             body: JSON.stringify({ algorithm: target })
         });
-        showToast(`Algorithme bascule en ${label}`);
-        loadRules();
+        const confirmed = (res?.algorithm === 'trueskill2') ? 'trueskill2' : 'elo';
+        picker.dataset.current = confirmed;
+        picker.dataset.busy = '';
+        picker.classList.remove('is-loading');
+        showToast(`Algorithme : ${getAlgorithmLabel(confirmed)}`);
+        // Reload complet pour rafraichir coefficients + autres sections lies a l algo.
+        await loadRules();
     } catch (err) {
-        showToast(err.message, 'error');
+        // Rollback visuel
+        picker.querySelectorAll('.algo-card-btn').forEach((b) => {
+            b.classList.toggle('is-active', b.dataset.algo === picker.dataset.current);
+        });
+        picker.dataset.busy = '';
+        picker.classList.remove('is-loading');
+        showToast(err?.message || 'Echec', 'error');
     }
 }
+
+// Compat anciens appels.
+const toggleAlgorithm = (seasonId, target) => switchAlgorithm(seasonId, target);
 
 // ===== Profile =====
 async function loadProfile() {
@@ -2176,17 +2312,18 @@ async function loadProfile() {
         setPlayer(me);
         document.getElementById('header-user').textContent = me.display_name;
 
+        const myTitle = titleBadgeHtml(me.equipped_title_label, me.equipped_title_color);
         let html = `<div class="card">
             <div class="card-title">Mon profil</div>
             <div class="profile-hero">
                 <div style="position:relative">
-                    ${avatarHtml(me.profile_photo, 72)}
+                    ${avatarHtml(me.profile_photo, 72, { borderImage: me.equipped_border_image })}
                     <label for="photo-upload" class="photo-upload-btn" style="position:absolute;bottom:-4px;right:-4px;background:var(--accent);width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;border:2px solid var(--bg-primary)">+
                         <input type="file" id="photo-upload" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;pointer-events:none" onchange="uploadProfilePhoto(this)">
                     </label>
                 </div>
                 <div class="profile-hero-copy">
-                    <div style="font-size:20px;font-weight:800">${me.display_name}</div>
+                    <div style="font-size:20px;font-weight:800">${escapeHtml(me.display_name)}${myTitle}</div>
                     ${me.identifier ? `<div class="player-profile-identifier">@${me.identifier}</div>` : ''}
                     <div style="font-size:13px;color:var(--text-muted)">Compte #${me.id}</div>
                 </div>
@@ -2248,9 +2385,20 @@ async function loadProfile() {
         }
         html += `</div>`;
 
+        html += `<div class="card"><div class="card-title">Mes skins</div>
+            <div id="my-skins-content"><div class="loading">Chargement...</div></div>
+        </div>`;
+
+        html += `<div class="card"><div class="card-title">Mes recaps de saison</div>
+            <div id="my-recaps-content"><div class="loading">Chargement...</div></div>
+        </div>`;
+
         html += `<button class="btn btn-secondary" onclick="logout()" style="margin-top:16px">Deconnexion</button>`;
 
         container.innerHTML = html;
+
+        loadMySkins();
+        loadMyRecaps();
     } catch (err) {
         container.innerHTML = `<div class="empty-state">${err.message}</div>`;
     }
@@ -2481,6 +2629,20 @@ async function loadAdmin() {
             </div>
         </div>`;
 
+        // Theme global (admin uniquement)
+        const currentTheme = document.body.getAttribute('data-theme') || 'classic';
+        html += `<div class="admin-section">
+            <h2>Theme global</h2>
+            <div class="card">
+                <div class="card-title">Theme applique a tous les joueurs</div>
+                <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Le theme choisi ici est impose a tous les joueurs de l'application.</div>
+                <div class="theme-switcher">
+                    <button class="${currentTheme === 'classic' ? 'active' : ''}" onclick="setGlobalTheme('classic')">Classique</button>
+                    <button class="${currentTheme === 'mai' ? 'active' : ''}" onclick="setGlobalTheme('mai')">Mai</button>
+                </div>
+            </div>
+        </div>`;
+
         html += `<div class="admin-section">
             <h2>Console SQL</h2>
             <div class="card">
@@ -2507,10 +2669,7 @@ async function loadAdmin() {
             <div class="form-group"><label>Nouvelle saison</label><input id="new-season-name" placeholder="Nom de la saison" required></div>
             <div class="form-group">
                 <label>Algorithme</label>
-                <select id="new-algorithm">
-                    <option value="elo" selected>ELO (actuel)</option>
-                    <option value="trueskill2">TrueSkill2</option>
-                </select>
+                ${renderAlgoSeg('new', 'elo')}
             </div>
             <div class="coeff-grid" style="margin-bottom:12px">
                 <div class="form-group"><label>K Factor</label><input id="new-k" type="number" step="0.000001" value="32"></div>
@@ -2527,10 +2686,10 @@ async function loadAdmin() {
             <div class="coeff-grid" style="margin-bottom:12px">
                 <div class="form-group"><label>TS mu initial</label><input id="new-ts-mu" type="number" step="0.000001" value="25"></div>
                 <div class="form-group"><label>TS sigma initial</label><input id="new-ts-sigma" type="number" step="0.000001" value="8.333333"></div>
-                <div class="form-group"><label>TS beta</label><input id="new-ts-beta" type="number" step="0.000001" value="4.166667"></div>
+                <div class="form-group"><label>TS beta</label><input id="new-ts-beta" type="number" step="0.000001" value="28.666667"></div>
                 <div class="form-group"><label>TS tau (dynamique)</label><input id="new-ts-tau" type="number" step="0.000001" value="0.083333"></div>
-                <div class="form-group"><label>TS echelle ELO</label><input id="new-ts-scale" type="number" step="0.000001" value="48"></div>
-                <div class="form-group"><label>TS bonus score</label><input id="new-ts-score" type="number" step="0.000001" min="0" value="0.1"></div>
+                <div class="form-group"><label>TS echelle ELO</label><input id="new-ts-scale" type="number" step="0.000001" value="61"></div>
+                <div class="form-group"><label>TS bonus score</label><input id="new-ts-score" type="number" step="0.000001" min="0" value="0"></div>
             </div>
             ${renderCoeffHelp({
                 win_streak_multiplier: 0.05,
@@ -2564,10 +2723,7 @@ async function loadAdmin() {
                     <div class="form-group"><label>Nom</label><input id="edit-name" value="${as.name}"></div>
                     <div class="form-group">
                         <label>Algorithme</label>
-                        <select id="edit-algorithm">
-                            <option value="elo" ${currentAlgo === 'elo' ? 'selected' : ''}>ELO (actuel)</option>
-                            <option value="trueskill2" ${currentAlgo === 'trueskill2' ? 'selected' : ''}>TrueSkill2</option>
-                        </select>
+                        ${renderAlgoSeg('edit', currentAlgo, as.id)}
                     </div>
                     <div class="coeff-grid" style="margin-bottom:12px">
                         <div class="form-group"><label>K Factor</label><input id="edit-k" type="number" step="0.000001" value="${fmtCoeff(as.base_k_factor)}"></div>
@@ -2584,10 +2740,10 @@ async function loadAdmin() {
                     <div class="coeff-grid" style="margin-bottom:12px">
                         <div class="form-group"><label>TS mu initial</label><input id="edit-ts-mu" type="number" step="0.000001" value="${fmtCoeff(as.ts_mu ?? 25)}"></div>
                         <div class="form-group"><label>TS sigma initial</label><input id="edit-ts-sigma" type="number" step="0.000001" value="${fmtCoeff(as.ts_sigma ?? 8.333333)}"></div>
-                        <div class="form-group"><label>TS beta</label><input id="edit-ts-beta" type="number" step="0.000001" value="${fmtCoeff(as.ts_beta ?? 4.166667)}"></div>
+                        <div class="form-group"><label>TS beta</label><input id="edit-ts-beta" type="number" step="0.000001" value="${fmtCoeff(as.ts_beta ?? 28.666667)}"></div>
                         <div class="form-group"><label>TS tau (dynamique)</label><input id="edit-ts-tau" type="number" step="0.000001" value="${fmtCoeff(as.ts_tau ?? 0.083333)}"></div>
-                        <div class="form-group"><label>TS echelle ELO</label><input id="edit-ts-scale" type="number" step="0.000001" value="${fmtCoeff(as.ts_scale ?? 48)}"></div>
-                        <div class="form-group"><label>TS bonus score</label><input id="edit-ts-score" type="number" step="0.000001" min="0" value="${fmtCoeff(as.ts_score_multiplier ?? 0.1)}"></div>
+                        <div class="form-group"><label>TS echelle ELO</label><input id="edit-ts-scale" type="number" step="0.000001" value="${fmtCoeff(as.ts_scale ?? 61)}"></div>
+                        <div class="form-group"><label>TS bonus score</label><input id="edit-ts-score" type="number" step="0.000001" min="0" value="${fmtCoeff(as.ts_score_multiplier ?? 0)}"></div>
                     </div>
                     ${renderCoeffHelp(as)}
                     ${renderTsCoeffHelp()}
@@ -2640,11 +2796,16 @@ async function loadAdmin() {
         }
         html += `</div>`;
 
+        html += `<div class="admin-section"><h2>Skins (Titres & Bordures)</h2>
+            <div id="admin-skins-content"><div class="loading">Chargement...</div></div>
+        </div>`;
+
         html += `<div id="admin-msg" class="success-msg"></div>`;
 
         container.innerHTML = html;
         renderAdminPlayersList();
         renderAdminSqlResult(adminSqlLastResult);
+        loadAdminSkins();
     } catch (err) {
         container.innerHTML = `<div class="empty-state">${err.message}</div>`;
     }
@@ -2688,7 +2849,7 @@ async function createSeason(e) {
                 win_streak_multiplier: parseFloat(document.getElementById('new-win-streak').value),
                 loss_streak_multiplier: parseFloat(document.getElementById('new-loss-streak').value),
                 winrate_multiplier: parseFloat(document.getElementById('new-winrate').value),
-                algorithm: document.getElementById('new-algorithm').value,
+                algorithm: getPickedAlgo('new'),
                 ts_mu: parseFloat(document.getElementById('new-ts-mu').value),
                 ts_sigma: parseFloat(document.getElementById('new-ts-sigma').value),
                 ts_beta: parseFloat(document.getElementById('new-ts-beta').value),
@@ -2737,7 +2898,7 @@ async function updateCoeffs(e, id) {
                 win_streak_multiplier: parseFloat(document.getElementById('edit-win-streak').value),
                 loss_streak_multiplier: parseFloat(document.getElementById('edit-loss-streak').value),
                 winrate_multiplier: parseFloat(document.getElementById('edit-winrate').value),
-                algorithm: document.getElementById('edit-algorithm').value,
+                algorithm: getPickedAlgo('edit'),
                 ts_mu: parseFloat(document.getElementById('edit-ts-mu').value),
                 ts_sigma: parseFloat(document.getElementById('edit-ts-sigma').value),
                 ts_beta: parseFloat(document.getElementById('edit-ts-beta').value),
@@ -3297,6 +3458,601 @@ async function submitTournamentMatch(e, tournamentId, matchId) {
         viewTournament(tournamentId);
     } catch (err) {
         errEl.textContent = err.message;
+    }
+}
+
+// ============================================
+// THEME / RECAP / SKINS
+// ============================================
+
+async function refreshMeAndTheme() {
+    try {
+        const [me, themeData] = await Promise.all([
+            api('/auth/me'),
+            fetch('/api/settings/theme').then((r) => r.ok ? r.json() : null).catch(() => null),
+        ]);
+        setPlayer(me);
+        if (themeData?.theme) applyTheme(themeData.theme);
+        document.getElementById('header-user').textContent = me.display_name || '';
+    } catch (err) {
+        // ignore (token verification handled centrally)
+    }
+}
+
+// Theme global : seuls les admins peuvent changer. Tous les joueurs voient le meme.
+async function setGlobalTheme(theme) {
+    applyTheme(theme);
+    try {
+        await api('/settings/theme', {
+            method: 'PUT',
+            body: JSON.stringify({ theme })
+        });
+        showToast('Theme global mis a jour');
+        if (currentPage === 'admin') loadAdmin();
+    } catch (err) {
+        showToast(err.message || 'Erreur', 'error');
+    }
+}
+
+// =================== RECAP SAISON ===================
+
+async function checkPendingRecap() {
+    try {
+        const pending = await api('/recaps/me/pending');
+        if (pending && pending.data) {
+            showRecapModal(pending.data, {
+                title: pending.season_name,
+                seasonId: pending.season_id,
+                markSeen: true,
+            });
+        }
+    } catch (err) {
+        // silent: ne pas bloquer le chargement de l app si recap KO
+    }
+}
+
+// Helper : slide "personne" (most_beaten / nemesis / best_teammate) - meme structure HTML.
+function buildPersonSlide(type, person, heading, captionFn) {
+    return {
+        type,
+        html: `
+            <h2>${heading}</h2>
+            ${person.photo ? `<img src="${withAppBasePath(person.photo)}" class="recap-player-pic" alt="">` : ''}
+            <div class="recap-medium">${escapeHtml(person.name)}</div>
+            <div class="recap-caption">${captionFn(person)}</div>
+        `,
+    };
+}
+
+function buildRecapSlides(data, options) {
+    const r = data || {};
+    const opts = options || {};
+    const slides = [];
+    const isGlobal = !!r.top_global;
+
+    if (isGlobal) {
+        slides.push({
+            type: 'intro',
+            html: `
+                <h2>${escapeHtml(r.season_name || 'Saison')}</h2>
+                <div class="recap-bignum">${r.total_matches || 0}</div>
+                <div class="recap-caption">matchs joues cette saison<br>par ${r.active_players || 0} joueur(s) actif(s)</div>
+            `
+        });
+        const podiums = [
+            ['Classement global', r.top_global],
+            ['Top Solo', r.top_solo],
+            ['Top Attaque', r.top_attack],
+            ['Top Defense', r.top_defense],
+            ['Top 1v1', r.top_1v1],
+            ['Top Duo', r.top_duo],
+        ];
+        for (const [title, players] of podiums) {
+            if (!Array.isArray(players) || players.length === 0) continue;
+            slides.push({ type: 'podium', html: renderRecapPodium(title, players) });
+        }
+        slides.push({
+            type: 'outro',
+            html: `
+                <h2>Merci d avoir joue !</h2>
+                <div class="recap-medium">${escapeHtml(r.season_name || '')}</div>
+                <div class="recap-caption">Une nouvelle saison commence.<br>Que la baguette soit avec vous.</div>
+            `
+        });
+    } else {
+        slides.push({
+            type: 'intro',
+            html: `
+                <h2>Ta saison ${opts.title ? escapeHtml(opts.title) : ''}</h2>
+                <div class="recap-bignum">${r.total_matches || 0}</div>
+                <div class="recap-caption">matchs joues</div>
+            `
+        });
+        slides.push({
+            type: 'wl',
+            html: `
+                <h2>Bilan</h2>
+                <div class="recap-medium" style="color:#7df0a0">${r.wins || 0} V</div>
+                <div class="recap-medium" style="color:#ff6f7e">${r.losses || 0} D</div>
+                <div class="recap-caption">${r.winrate || 0}% de winrate</div>
+            `
+        });
+        if (r.total_elo_delta !== 0 && r.total_elo_delta !== undefined) {
+            const sign = r.total_elo_delta > 0 ? '+' : '';
+            slides.push({
+                type: 'elo',
+                html: `
+                    <h2>Variation ELO</h2>
+                    <div class="recap-bignum" style="color:${r.total_elo_delta >= 0 ? '#7df0a0' : '#ff6f7e'}">${sign}${r.total_elo_delta}</div>
+                    <div class="recap-caption">cumul des gains/pertes ELO</div>
+                `
+            });
+        }
+        if (r.best_streak) {
+            slides.push({
+                type: 'streak',
+                html: `
+                    <h2>Plus longue serie</h2>
+                    <div class="recap-bignum">${Math.abs(r.best_streak)}</div>
+                    <div class="recap-caption">${r.best_streak > 0 ? 'victoires consecutives' : 'defaites consecutives'}</div>
+                `
+            });
+        }
+        if (r.most_beaten) {
+            slides.push(buildPersonSlide('beaten', r.most_beaten, 'Ta victime favorite',
+                (p) => `${p.wins} victoires contre lui/elle`));
+        }
+        if (r.nemesis) {
+            slides.push(buildPersonSlide('nemesis', r.nemesis, 'Ta nemesis',
+                (p) => `${p.losses} defaites contre lui/elle`));
+        }
+        if (r.best_teammate) {
+            slides.push(buildPersonSlide('mate', r.best_teammate, 'Meilleur coequipier',
+                (p) => `${p.wins} victoires ensemble`));
+        }
+        if (r.match_type_breakdown) {
+            const b = r.match_type_breakdown;
+            slides.push({
+                type: 'breakdown',
+                html: `
+                    <h2>Repartition</h2>
+                    <div class="recap-medium">${b.solo || 0} solos</div>
+                    <div class="recap-medium">${b.duo || 0} duos</div>
+                    <div class="recap-medium">${b['1v1'] || 0} 1v1</div>
+                `
+            });
+        }
+        slides.push({
+            type: 'outro',
+            html: `
+                <h2>A la prochaine saison !</h2>
+                <div class="recap-medium">Continue de jouer.</div>
+                <div class="recap-caption">Ton recap est sauvegarde dans ton profil.</div>
+            `
+        });
+    }
+    return slides;
+}
+
+function renderRecapPodium(title, players) {
+    if (!Array.isArray(players) || players.length === 0) {
+        return `<h2>${escapeHtml(title)}</h2><div class="recap-caption">Aucun joueur classe</div>`;
+    }
+    const p1 = players[0];
+    const p2 = players[1];
+    const p3 = players[2];
+    function podiumItem(p, cls, pos) {
+        if (!p) return '';
+        const elo = p.total_elo ?? p.elo ?? '';
+        return `<div class="recap-podium-item ${cls}">
+            <div class="pos">${pos}</div>
+            <div class="nm">${escapeHtml(p.display_name || '')}</div>
+            ${elo !== '' ? `<div class="el">${elo} ELO</div>` : ''}
+        </div>`;
+    }
+    return `<h2>${escapeHtml(title)}</h2>
+        <div class="recap-podium">
+            ${podiumItem(p2, 'silver', 2)}
+            ${podiumItem(p1, 'gold', 1)}
+            ${podiumItem(p3, 'bronze', 3)}
+        </div>
+        <div class="recap-caption">${players.length} joueur(s) classe(s)</div>`;
+}
+
+let recapState = { slides: [], index: 0, timer: null, options: null };
+
+function showRecapModal(data, options) {
+    options = options || {};
+    const slides = buildRecapSlides(data, options);
+    if (slides.length === 0) return;
+
+    document.querySelectorAll('.recap-overlay').forEach((el) => el.remove());
+
+    recapState = { slides, index: 0, timer: null, options };
+
+    const overlay = document.createElement('div');
+    overlay.className = 'recap-overlay';
+    overlay.innerHTML = `
+        <div class="recap-modal">
+            <div class="recap-confetti" id="recap-confetti"></div>
+            <div class="recap-progress" id="recap-progress"></div>
+            <button class="recap-close" onclick="closeRecapModal()" aria-label="Fermer">&times;</button>
+            <div class="recap-slide" id="recap-slide-content"></div>
+            <div class="recap-nav">
+                <div class="recap-nav-zone" onclick="prevRecapSlide()"></div>
+                <div class="recap-nav-zone" onclick="nextRecapSlide()"></div>
+            </div>
+            <button class="recap-replay-btn" onclick="restartRecap()">Rejouer</button>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    spawnConfetti(document.getElementById('recap-confetti'));
+    renderRecapSlide();
+
+    if (options.markSeen && options.seasonId) {
+        api(`/recaps/me/${options.seasonId}/seen`, { method: 'POST' }).catch(() => {});
+    }
+}
+
+function spawnConfetti(container) {
+    if (!container) return;
+    const colors = ['#ffd76b', '#7df0a0', '#ff6f7e', '#6cc5b8', '#b13d8a', '#ffffff'];
+    for (let i = 0; i < 30; i++) {
+        const piece = document.createElement('span');
+        piece.style.left = (Math.random() * 100) + '%';
+        piece.style.background = colors[i % colors.length];
+        piece.style.animationDelay = (Math.random() * 5) + 's';
+        piece.style.animationDuration = (3.5 + Math.random() * 2.5) + 's';
+        container.appendChild(piece);
+    }
+}
+
+function renderRecapSlide() {
+    const slot = document.getElementById('recap-slide-content');
+    const progressBar = document.getElementById('recap-progress');
+    if (!slot) return;
+    slot.innerHTML = recapState.slides[recapState.index].html;
+    progressBar.innerHTML = recapState.slides
+        .map((_, i) => {
+            if (i < recapState.index) return '<div class="recap-progress-bar completed"></div>';
+            if (i === recapState.index) return '<div class="recap-progress-bar active"></div>';
+            return '<div class="recap-progress-bar"></div>';
+        })
+        .join('');
+
+    if (recapState.timer) clearTimeout(recapState.timer);
+    recapState.timer = setTimeout(() => nextRecapSlide(true), 5000);
+}
+
+function nextRecapSlide() {
+    if (recapState.index < recapState.slides.length - 1) {
+        recapState.index++;
+        renderRecapSlide();
+    } else {
+        if (recapState.timer) clearTimeout(recapState.timer);
+    }
+}
+
+function prevRecapSlide() {
+    if (recapState.index > 0) {
+        recapState.index--;
+        renderRecapSlide();
+    }
+}
+
+function restartRecap() {
+    recapState.index = 0;
+    renderRecapSlide();
+}
+
+function closeRecapModal() {
+    if (recapState.timer) clearTimeout(recapState.timer);
+    document.querySelectorAll('.recap-overlay').forEach((el) => el.remove());
+}
+
+async function loadMyRecaps() {
+    const slot = document.getElementById('my-recaps-content');
+    if (!slot) return;
+    try {
+        const [personal, globalSeasons] = await Promise.all([
+            api('/recaps/me'),
+            api('/recaps/seasons')
+        ]);
+
+        let html = '';
+        if (personal.length === 0 && globalSeasons.length === 0) {
+            slot.innerHTML = '<div class="empty-state" style="padding:12px">Aucun recap disponible. Joue des matchs pour en debloquer un en fin de saison.</div>';
+            return;
+        }
+
+        if (personal.length > 0) {
+            html += '<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">Tes recaps perso</div>';
+            html += personal.map((p) => `
+                <div class="player-list-item">
+                    <div><strong>${escapeHtml(p.season_name)}</strong> - ${p.data?.total_matches || 0} matchs</div>
+                    <button class="btn btn-small" onclick='openSavedRecap(${p.season_id}, false)'>Voir</button>
+                </div>
+            `).join('');
+        }
+
+        if (globalSeasons.length > 0) {
+            html += '<div style="font-size:12px;color:var(--text-muted);margin:10px 0 6px">Recaps globaux (visibles par tous)</div>';
+            html += globalSeasons.map((s) => `
+                <div class="player-list-item">
+                    <div><strong>${escapeHtml(s.name)}</strong> ${s.end_date ? `<span style="font-size:11px;color:var(--text-muted)">${formatDate(s.end_date)}</span>` : ''}</div>
+                    <button class="btn btn-small btn-secondary" onclick='openSavedRecap(${s.season_id}, true)'>Voir</button>
+                </div>
+            `).join('');
+        }
+
+        slot.innerHTML = html;
+    } catch (err) {
+        slot.innerHTML = `<div class="empty-state" style="padding:12px">${err.message}</div>`;
+    }
+}
+
+async function openSavedRecap(seasonId, isGlobal) {
+    try {
+        if (isGlobal) {
+            const result = await api(`/recaps/seasons/${seasonId}`);
+            showRecapModal(result.data, { title: result.data?.season_name });
+        } else {
+            const list = await api('/recaps/me');
+            const found = list.find((p) => p.season_id === seasonId);
+            if (found) showRecapModal(found.data, { title: found.season_name });
+        }
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+// =================== SKINS ===================
+
+let mySkinsCache = null;
+
+function renderOwnedSkinList(items, skinType, equippedId, emptyText) {
+    if (items.length === 0) {
+        return `<div class="empty-state" style="padding:8px">${emptyText}</div>`;
+    }
+    return `<div class="skin-list">${items.map((item) => {
+        const isEquipped = equippedId === item.id;
+        const visual = skinType === 'title'
+            ? `<div class="skin-label" style="${item.color ? `color:${escapeHtml(item.color)}` : ''}">${escapeHtml(item.label)}</div>`
+            : `<img src="${withAppBasePath(item.image_path)}" alt="${escapeHtml(item.label)}">
+               <div class="skin-label">${escapeHtml(item.label)}</div>`;
+        const actionBtn = isEquipped
+            ? `<button class="btn btn-small btn-secondary" onclick="equipMySkin('${skinType}', null)">Retirer</button>`
+            : `<button class="btn btn-small" onclick="equipMySkin('${skinType}', ${item.id})">Equiper</button>`;
+        return `<div class="skin-item ${isEquipped ? 'equipped' : ''}">
+                ${visual}
+                <div class="skin-item-actions">${actionBtn}</div>
+            </div>`;
+    }).join('')}</div>`;
+}
+
+async function loadMySkins() {
+    const slot = document.getElementById('my-skins-content');
+    if (!slot) return;
+    try {
+        const data = await api('/skins/me');
+        mySkinsCache = data;
+        const titlesHtml = renderOwnedSkinList(data.titles, 'title', data.equipped_title_id, 'Aucun titre debloque');
+        const bordersHtml = renderOwnedSkinList(data.borders, 'border', data.equipped_border_id, 'Aucune bordure debloquee');
+
+        slot.innerHTML = `
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">Titres</div>
+            ${titlesHtml}
+            <div style="font-size:12px;color:var(--text-muted);margin:10px 0 6px">Bordures de photo</div>
+            ${bordersHtml}
+        `;
+    } catch (err) {
+        slot.innerHTML = `<div class="empty-state" style="padding:12px">${err.message}</div>`;
+    }
+}
+
+async function equipMySkin(skinType, skinId) {
+    try {
+        await api('/skins/me/equip', {
+            method: 'PUT',
+            body: JSON.stringify({ skin_type: skinType, skin_id: skinId })
+        });
+        showToast('Equipement mis a jour');
+        await refreshMeAndTheme();
+        if (currentPage === 'profile') {
+            await loadProfile();
+        } else {
+            await loadMySkins();
+        }
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+// =================== ADMIN SKINS ===================
+
+let adminSkinsCache = { titles: [], borders: [] };
+
+async function loadAdminSkins() {
+    const slot = document.getElementById('admin-skins-content');
+    if (!slot) return;
+    try {
+        const [titles, borders] = await Promise.all([
+            api('/skins/titles'),
+            api('/skins/borders')
+        ]);
+        adminSkinsCache = { titles, borders };
+
+        let html = `
+            <div class="skin-card">
+                <div class="card-title">Titres</div>
+                <form onsubmit="createSkinTitle(event)" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
+                    <div class="form-group" style="flex:1;margin:0;min-width:160px">
+                        <label>Texte du titre</label>
+                        <input id="new-title-label" maxlength="80" placeholder="Ex: Champion S1" required>
+                    </div>
+                    <div class="form-group" style="margin:0;width:120px">
+                        <label>Couleur</label>
+                        <input id="new-title-color" type="color" value="#c8aa6e">
+                    </div>
+                    <button type="submit" class="btn btn-small">Ajouter</button>
+                </form>
+                ${titles.length === 0 ? '<div class="empty-state" style="padding:8px">Aucun titre</div>' : `
+                <div class="skin-list">
+                    ${titles.map((t) => `
+                        <div class="skin-item">
+                            <div class="skin-label" style="color:${escapeHtml(t.color || 'var(--text-primary)')}">${escapeHtml(t.label)}</div>
+                            <div class="skin-item-actions">
+                                <button class="btn btn-small" onclick="openGrantSkin('title', ${t.id}, '${escapeHtml(t.label).replace(/'/g, "\\'")}')">Attribuer</button>
+                                <button class="btn btn-small btn-danger" onclick="deleteSkinTitle(${t.id})">Suppr</button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>`}
+            </div>
+
+            <div class="skin-card">
+                <div class="card-title">Bordures</div>
+                <form onsubmit="createSkinBorder(event)" enctype="multipart/form-data" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
+                    <div class="form-group" style="flex:1;margin:0;min-width:160px">
+                        <label>Nom de la bordure</label>
+                        <input id="new-border-label" maxlength="80" placeholder="Ex: Couronne d or" required>
+                    </div>
+                    <div class="form-group" style="margin:0">
+                        <label>Image (PNG/SVG)</label>
+                        <input id="new-border-file" type="file" accept="image/*" required>
+                    </div>
+                    <button type="submit" class="btn btn-small">Ajouter</button>
+                </form>
+                ${borders.length === 0 ? '<div class="empty-state" style="padding:8px">Aucune bordure</div>' : `
+                <div class="skin-list">
+                    ${borders.map((b) => `
+                        <div class="skin-item">
+                            <img src="${withAppBasePath(b.image_path)}" alt="${escapeHtml(b.label)}">
+                            <div class="skin-label">${escapeHtml(b.label)}</div>
+                            <div class="skin-item-actions">
+                                <button class="btn btn-small" onclick="openGrantSkin('border', ${b.id}, '${escapeHtml(b.label).replace(/'/g, "\\'")}')">Attribuer</button>
+                                <button class="btn btn-small btn-danger" onclick="deleteSkinBorder(${b.id})">Suppr</button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>`}
+            </div>
+        `;
+        slot.innerHTML = html;
+    } catch (err) {
+        slot.innerHTML = `<div class="empty-state" style="padding:12px">${err.message}</div>`;
+    }
+}
+
+async function createSkinTitle(e) {
+    e.preventDefault();
+    const label = document.getElementById('new-title-label').value.trim();
+    const color = document.getElementById('new-title-color').value;
+    if (!label) return;
+    try {
+        await api('/skins/titles', {
+            method: 'POST',
+            body: JSON.stringify({ label, color })
+        });
+        showToast('Titre ajoute');
+        await loadAdminSkins();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function deleteSkinTitle(id) {
+    if (!confirm('Supprimer ce titre ? Il sera retire de tous les joueurs qui le possedent.')) return;
+    try {
+        await api(`/skins/titles/${id}`, { method: 'DELETE' });
+        showToast('Titre supprime');
+        await loadAdminSkins();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function createSkinBorder(e) {
+    e.preventDefault();
+    const label = document.getElementById('new-border-label').value.trim();
+    const file = document.getElementById('new-border-file').files?.[0];
+    if (!label || !file) return;
+    try {
+        const fd = new FormData();
+        fd.append('label', label);
+        fd.append('image', file);
+        await apiUpload('/skins/borders', fd);
+        showToast('Bordure ajoutee');
+        await loadAdminSkins();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function deleteSkinBorder(id) {
+    if (!confirm('Supprimer cette bordure ? Elle sera retiree de tous les joueurs qui la possedent.')) return;
+    try {
+        await api(`/skins/borders/${id}`, { method: 'DELETE' });
+        showToast('Bordure supprimee');
+        await loadAdminSkins();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+function openGrantSkin(skinType, skinId, label) {
+    const overlay = document.createElement('div');
+    overlay.className = 'elo-result-overlay';
+    overlay.innerHTML = `
+        <div class="elo-result-box" style="max-width:480px;text-align:left">
+            <h2>Attribuer : ${escapeHtml(label)}</h2>
+            <div style="margin-bottom:10px;font-size:13px;color:var(--text-muted)">Choisis le joueur a qui attribuer ce ${skinType === 'title' ? 'titre' : 'bordure'}.</div>
+            <input type="text" class="search-input" id="grant-search" placeholder="Rechercher un joueur..." oninput="filterGrantList(this.value)">
+            <div id="grant-player-list" style="max-height:300px;overflow-y:auto"></div>
+            <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
+                <button class="btn btn-secondary" onclick="this.closest('.elo-result-overlay').remove()">Fermer</button>
+            </div>
+        </div>
+    `;
+    overlay.dataset.skinType = skinType;
+    overlay.dataset.skinId = skinId;
+    document.body.appendChild(overlay);
+    renderGrantPlayerList('');
+}
+
+function renderGrantPlayerList(filterStr) {
+    const list = document.getElementById('grant-player-list');
+    if (!list) return;
+    const overlay = list.closest('.elo-result-overlay');
+    const skinType = overlay.dataset.skinType;
+    const skinId = parseInt(overlay.dataset.skinId);
+    const q = (filterStr || '').toLowerCase().trim();
+    const players = (adminPlayersCache || []).filter((p) =>
+        !q || p.display_name.toLowerCase().includes(q) || (p.identifier || '').toLowerCase().includes(q)
+    );
+    list.innerHTML = players.map((p) => `
+        <div class="player-list-item">
+            <div>${avatarHtml(p.profile_photo, 32, { clickable: false })} <span style="margin-left:6px">${escapeHtml(p.display_name)}</span></div>
+            <button class="btn btn-small" onclick="grantSkinTo(${p.id}, '${skinType}', ${skinId})">Donner</button>
+        </div>
+    `).join('');
+}
+
+function filterGrantList(value) {
+    renderGrantPlayerList(value);
+}
+
+async function grantSkinTo(playerId, skinType, skinId) {
+    try {
+        await api('/skins/grant', {
+            method: 'POST',
+            body: JSON.stringify({ player_id: playerId, skin_type: skinType, skin_id: skinId })
+        });
+        showToast('Skin attribue');
+        document.querySelectorAll('.elo-result-overlay').forEach((o) => o.remove());
+    } catch (err) {
+        showToast(err.message, 'error');
     }
 }
 

@@ -169,20 +169,32 @@ async function ensureSchema(connOrPool) {
             "ALTER TABLE seasons ADD COLUMN algorithm ENUM('elo','trueskill2') NOT NULL DEFAULT 'elo' AFTER winrate_multiplier"
         );
     }
+    // Defauts calibres pour ~80 pts ELO/match, +/-10 pts par 400 pts d ecart.
     const tsSeasonCols = [
         ['ts_mu', 'DECIMAL(10,6) DEFAULT 25.000000'],
         ['ts_sigma', 'DECIMAL(10,6) DEFAULT 8.333333'],
-        ['ts_beta', 'DECIMAL(10,6) DEFAULT 4.166667'],
+        ['ts_beta', 'DECIMAL(10,6) DEFAULT 28.666667'],
         ['ts_tau', 'DECIMAL(10,6) DEFAULT 0.083333'],
         ['ts_draw_probability', 'DECIMAL(10,6) DEFAULT 0.000000'],
-        ['ts_scale', 'DECIMAL(10,6) DEFAULT 48.000000'],
-        ['ts_score_multiplier', 'DECIMAL(10,6) DEFAULT 0.100000'],
+        ['ts_scale', 'DECIMAL(10,6) DEFAULT 61.000000'],
+        ['ts_score_multiplier', 'DECIMAL(10,6) DEFAULT 0.000000'],
     ];
     for (const [col, def] of tsSeasonCols) {
         if (!seasonColumnNames.has(col)) {
             await connOrPool.query(`ALTER TABLE seasons ADD COLUMN ${col} ${def}`);
         }
     }
+
+    // Migration ponctuelle : si les seasons existantes ont encore les anciens
+    // defauts TS (beta=4.166667, scale=48, score_mult=0.1), les ramener aux
+    // nouveaux defauts calibres. Les seasons deja personnalisees sont preservees.
+    await connOrPool.query(`
+        UPDATE seasons
+        SET ts_beta = 28.666667, ts_scale = 61.000000, ts_score_multiplier = 0.000000
+        WHERE ABS(ts_beta - 4.166667) < 0.0001
+          AND ABS(ts_scale - 48.000000) < 0.0001
+          AND ABS(ts_score_multiplier - 0.100000) < 0.0001
+    `);
 
     // === TrueSkill2 per-player state ===
     const tsRatingCols = [
@@ -217,6 +229,111 @@ async function ensureSchema(connOrPool) {
             message VARCHAR(500) NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
+        )`);
+    }
+
+    // === Theme preference per player (legacy, conserve pour compat) ===
+    if (!playerColumnNames.has('theme_preference')) {
+        await connOrPool.query(
+            "ALTER TABLE players ADD COLUMN theme_preference VARCHAR(32) NOT NULL DEFAULT 'classic'"
+        );
+    }
+
+    // === Global app settings (theme global impose par les admins) ===
+    const [appSettingsTables] = await connOrPool.query("SHOW TABLES LIKE 'app_settings'");
+    if (appSettingsTables.length === 0) {
+        await connOrPool.query(`CREATE TABLE app_settings (
+            \`key\` VARCHAR(64) PRIMARY KEY,
+            value VARCHAR(255) NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )`);
+        await connOrPool.query(
+            "INSERT INTO app_settings (`key`, value) VALUES ('theme', 'classic')"
+        );
+    }
+
+    // === Equipped skin pointers per player ===
+    if (!playerColumnNames.has('equipped_title_id')) {
+        await connOrPool.query(
+            'ALTER TABLE players ADD COLUMN equipped_title_id INT DEFAULT NULL'
+        );
+    }
+    if (!playerColumnNames.has('equipped_border_id')) {
+        await connOrPool.query(
+            'ALTER TABLE players ADD COLUMN equipped_border_id INT DEFAULT NULL'
+        );
+    }
+
+    // === Skin titles ===
+    const [titleTables] = await connOrPool.query("SHOW TABLES LIKE 'skin_titles'");
+    if (titleTables.length === 0) {
+        await connOrPool.query(`CREATE TABLE skin_titles (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            label VARCHAR(80) NOT NULL,
+            color VARCHAR(20) DEFAULT NULL,
+            created_by INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (created_by) REFERENCES players(id)
+        )`);
+    }
+
+    // === Skin borders ===
+    const [borderTables] = await connOrPool.query("SHOW TABLES LIKE 'skin_borders'");
+    if (borderTables.length === 0) {
+        await connOrPool.query(`CREATE TABLE skin_borders (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            label VARCHAR(80) NOT NULL,
+            image_path VARCHAR(255) NOT NULL,
+            created_by INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (created_by) REFERENCES players(id)
+        )`);
+    }
+
+    // === Player owned skins (titles + borders) ===
+    const [ownedTables] = await connOrPool.query("SHOW TABLES LIKE 'player_skins'");
+    if (ownedTables.length === 0) {
+        await connOrPool.query(`CREATE TABLE player_skins (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            player_id INT NOT NULL,
+            skin_type ENUM('title','border') NOT NULL,
+            title_id INT DEFAULT NULL,
+            border_id INT DEFAULT NULL,
+            granted_by INT NOT NULL,
+            granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_player_title (player_id, title_id),
+            UNIQUE KEY uniq_player_border (player_id, border_id),
+            FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE,
+            FOREIGN KEY (title_id) REFERENCES skin_titles(id) ON DELETE CASCADE,
+            FOREIGN KEY (border_id) REFERENCES skin_borders(id) ON DELETE CASCADE,
+            FOREIGN KEY (granted_by) REFERENCES players(id)
+        )`);
+    }
+
+    // === Season recaps (global + per-player) ===
+    const [globalRecapTables] = await connOrPool.query("SHOW TABLES LIKE 'season_recaps'");
+    if (globalRecapTables.length === 0) {
+        await connOrPool.query(`CREATE TABLE season_recaps (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            season_id INT NOT NULL UNIQUE,
+            data JSON NOT NULL,
+            generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (season_id) REFERENCES seasons(id) ON DELETE CASCADE
+        )`);
+    }
+
+    const [playerRecapTables] = await connOrPool.query("SHOW TABLES LIKE 'player_season_recaps'");
+    if (playerRecapTables.length === 0) {
+        await connOrPool.query(`CREATE TABLE player_season_recaps (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            player_id INT NOT NULL,
+            season_id INT NOT NULL,
+            data JSON NOT NULL,
+            viewed_at TIMESTAMP NULL DEFAULT NULL,
+            generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_player_season_recap (player_id, season_id),
+            FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE,
+            FOREIGN KEY (season_id) REFERENCES seasons(id) ON DELETE CASCADE
         )`);
     }
 
