@@ -9,7 +9,8 @@
       "Bash(node -c routes/lobbies.js)",
       "Bash(node -c routes/seasons.js)",
       "Skill(claude-md-management:revise-claude-md)",
-      "Skill(claude-md-management:revise-claude-md:*)"
+      "Skill(claude-md-management:revise-claude-md:*)",
+      "Bash(node -e \"const fs=require\\('fs'\\);const c=fs.readFileSync\\('frontend/css/style.css','utf8'\\);const o=\\(c.match\\(/\\\\{/g\\)||[]\\).length,cl=\\(c.match\\(/\\\\}/g\\)||[]\\).length;console.log\\('css braces:',o,cl\\);\")"
     ]
   }
 }

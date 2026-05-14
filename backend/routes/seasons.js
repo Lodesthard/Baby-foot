@@ -113,13 +113,28 @@ router.put('/:id/activate', authenticateToken, requireAdmin, async (req, res) =>
         await conn.beginTransaction();
         const newSeasonId = parseInt(req.params.id);
 
+        // Source du carryover : saison actuellement active, sinon fallback sur la
+        // saison la plus recemment terminee. Garantit que les ELO/mu/sigma ne se
+        // perdent jamais entre deux activations meme si l admin a clos une saison
+        // avant d en activer une autre.
         const [previousActive] = await conn.query(
-            'SELECT id FROM seasons WHERE is_active = 1 AND id <> ?',
+            'SELECT id, is_active FROM seasons WHERE is_active = 1 AND id <> ?',
             [newSeasonId]
         );
-        const previousSeasonId = previousActive[0]?.id || null;
+        let previousSeasonId = previousActive[0]?.id || null;
+        let previousWasActive = !!previousSeasonId;
+        if (!previousSeasonId) {
+            const [recent] = await conn.query(
+                `SELECT id FROM seasons
+                 WHERE id <> ?
+                 ORDER BY (end_date IS NULL), end_date DESC, id DESC
+                 LIMIT 1`,
+                [newSeasonId]
+            );
+            previousSeasonId = recent[0]?.id || null;
+        }
 
-        if (previousSeasonId) {
+        if (previousWasActive) {
             await conn.query(
                 'UPDATE seasons SET is_active = 0, end_date = COALESCE(end_date, CURDATE()) WHERE id = ?',
                 [previousSeasonId]

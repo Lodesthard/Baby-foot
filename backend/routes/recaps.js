@@ -46,14 +46,45 @@ router.get('/seasons', authenticateToken, asyncRoute(async (req, res) => {
     res.json(rows);
 }));
 
-// Recap global d une saison (consultable par tous)
+// Recap global d une saison (consultable par tous).
+// Lazy migration : si le JSON stocke est anterieur a une evolution de schema
+// (ex: ajout de top_solo), on regenere a la volee avant de servir.
 router.get('/seasons/:id', authenticateToken, asyncRoute(async (req, res) => {
+    const seasonId = parseInt(req.params.id);
     const [rows] = await pool.query(
         'SELECT data, generated_at FROM season_recaps WHERE season_id = ?',
-        [req.params.id]
+        [seasonId]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Recap introuvable' });
-    res.json({ data: parseRecapData(rows[0].data), generated_at: rows[0].generated_at });
+
+    let data = parseRecapData(rows[0].data);
+    let generatedAt = rows[0].generated_at;
+
+    // Detection de schema obsolete : top_solo absent.
+    const stale = !data || !Array.isArray(data.top_solo);
+    if (stale) {
+        const conn = await pool.getConnection();
+        try {
+            await conn.beginTransaction();
+            await generateRecapsForSeason(conn, seasonId);
+            await conn.commit();
+        } catch (err) {
+            await conn.rollback();
+            console.error('Recap regen failed', err);
+        } finally {
+            conn.release();
+        }
+        const [fresh] = await pool.query(
+            'SELECT data, generated_at FROM season_recaps WHERE season_id = ?',
+            [seasonId]
+        );
+        if (fresh.length > 0) {
+            data = parseRecapData(fresh[0].data);
+            generatedAt = fresh[0].generated_at;
+        }
+    }
+
+    res.json({ data, generated_at: generatedAt });
 }));
 
 // Recap perso de la saison terminee la plus recente, si pas encore vu
