@@ -27,6 +27,9 @@ app.use('/api/tournaments', require('./routes/tournaments'));
 app.use('/api/rules', require('./routes/rules'));
 app.use('/api/lobbies', require('./routes/lobbies'));
 app.use('/api/chat', require('./routes/chat'));
+app.use('/api/recaps', require('./routes/recaps'));
+app.use('/api/skins', require('./routes/skins'));
+app.use('/api/settings', require('./routes/settings'));
 
 // SPA fallback
 app.get('*', (req, res) => {

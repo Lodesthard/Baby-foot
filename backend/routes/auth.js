@@ -142,7 +142,14 @@ router.post('/login', async (req, res) => {
 router.get('/me', authenticateToken, async (req, res) => {
     try {
         const [rows] = await pool.query(
-            'SELECT id, identifier, display_name, is_admin, profile_photo FROM players WHERE id = ?',
+            `SELECT p.id, p.identifier, p.display_name, p.is_admin, p.profile_photo,
+                    p.theme_preference, p.equipped_title_id, p.equipped_border_id,
+                    t.label AS equipped_title_label, t.color AS equipped_title_color,
+                    b.image_path AS equipped_border_image
+             FROM players p
+             LEFT JOIN skin_titles t ON t.id = p.equipped_title_id
+             LEFT JOIN skin_borders b ON b.id = p.equipped_border_id
+             WHERE p.id = ?`,
             [req.user.id]
         );
         if (rows.length === 0) return res.status(404).json({ error: 'Joueur non trouvé' });
@@ -151,6 +158,7 @@ router.get('/me', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Erreur serveur' });
     }
 });
+
 
 // Changer le pseudo (display_name)
 router.put('/display-name', authenticateToken, async (req, res) => {

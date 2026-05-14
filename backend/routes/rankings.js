@@ -18,6 +18,14 @@ async function ensureSeasonRatings(seasonId) {
     );
 }
 
+// Selection commune avec skin equipe (titre + bordure) pour tous les classements
+const RANKING_PLAYER_SELECT = `pr.*, p.display_name, p.profile_photo,
+                t.label AS equipped_title_label, t.color AS equipped_title_color,
+                b.image_path AS equipped_border_image`;
+const RANKING_PLAYER_JOINS = `JOIN players p ON pr.player_id = p.id
+             LEFT JOIN skin_titles t ON t.id = p.equipped_title_id
+             LEFT JOIN skin_borders b ON b.id = p.equipped_border_id`;
+
 // Classement attaque
 router.get('/attack', authenticateToken, async (req, res) => {
     try {
@@ -27,9 +35,9 @@ router.get('/attack', authenticateToken, async (req, res) => {
         await ensureSeasonRatings(seasonId);
 
         const [rows] = await pool.query(
-            `SELECT pr.*, p.display_name, p.profile_photo
+            `SELECT ${RANKING_PLAYER_SELECT}
              FROM player_ratings pr
-             JOIN players p ON pr.player_id = p.id
+             ${RANKING_PLAYER_JOINS}
              WHERE pr.season_id = ?
              ORDER BY pr.elo_attack DESC, p.display_name ASC`,
             [seasonId]
@@ -40,6 +48,9 @@ router.get('/attack', authenticateToken, async (req, res) => {
             player_id: r.player_id,
             display_name: r.display_name,
             profile_photo: r.profile_photo,
+            equipped_title_label: r.equipped_title_label,
+            equipped_title_color: r.equipped_title_color,
+            equipped_border_image: r.equipped_border_image,
             elo: r.elo_attack,
             rank: getRank(r.elo_attack),
             wins: r.wins_attack,
@@ -62,9 +73,9 @@ router.get('/defense', authenticateToken, async (req, res) => {
         await ensureSeasonRatings(seasonId);
 
         const [rows] = await pool.query(
-            `SELECT pr.*, p.display_name, p.profile_photo
+            `SELECT ${RANKING_PLAYER_SELECT}
              FROM player_ratings pr
-             JOIN players p ON pr.player_id = p.id
+             ${RANKING_PLAYER_JOINS}
              WHERE pr.season_id = ?
              ORDER BY pr.elo_defense DESC, p.display_name ASC`,
             [seasonId]
@@ -75,6 +86,9 @@ router.get('/defense', authenticateToken, async (req, res) => {
             player_id: r.player_id,
             display_name: r.display_name,
             profile_photo: r.profile_photo,
+            equipped_title_label: r.equipped_title_label,
+            equipped_title_color: r.equipped_title_color,
+            equipped_border_image: r.equipped_border_image,
             elo: r.elo_defense,
             rank: getRank(r.elo_defense),
             wins: r.wins_defense,
@@ -143,9 +157,9 @@ router.get('/1v1', authenticateToken, async (req, res) => {
         await ensureSeasonRatings(seasonId);
 
         const [rows] = await pool.query(
-            `SELECT pr.*, p.display_name, p.profile_photo
+            `SELECT ${RANKING_PLAYER_SELECT}
              FROM player_ratings pr
-             JOIN players p ON pr.player_id = p.id
+             ${RANKING_PLAYER_JOINS}
              WHERE pr.season_id = ?
              ORDER BY pr.elo_1v1 DESC, p.display_name ASC`,
             [seasonId]
@@ -156,6 +170,9 @@ router.get('/1v1', authenticateToken, async (req, res) => {
             player_id: r.player_id,
             display_name: r.display_name,
             profile_photo: r.profile_photo,
+            equipped_title_label: r.equipped_title_label,
+            equipped_title_color: r.equipped_title_color,
+            equipped_border_image: r.equipped_border_image,
             elo: r.elo_1v1,
             rank: getRank(r.elo_1v1),
             wins: r.wins_1v1,
@@ -178,9 +195,9 @@ router.get('/solo', authenticateToken, async (req, res) => {
         await ensureSeasonRatings(seasonId);
 
         const [rows] = await pool.query(
-            `SELECT pr.*, p.display_name, p.profile_photo
+            `SELECT ${RANKING_PLAYER_SELECT}
              FROM player_ratings pr
-             JOIN players p ON pr.player_id = p.id
+             ${RANKING_PLAYER_JOINS}
              WHERE pr.season_id = ?
              ORDER BY (pr.elo_attack + pr.elo_defense) DESC, p.display_name ASC`,
             [seasonId]
@@ -194,6 +211,9 @@ router.get('/solo', authenticateToken, async (req, res) => {
                 player_id: r.player_id,
                 display_name: r.display_name,
                 profile_photo: r.profile_photo,
+                equipped_title_label: r.equipped_title_label,
+                equipped_title_color: r.equipped_title_color,
+                equipped_border_image: r.equipped_border_image,
                 elo: r.elo_attack + r.elo_defense,
                 rank: getRank(Math.round((r.elo_attack + r.elo_defense) / 2)),
                 elo_attack: r.elo_attack,
@@ -220,45 +240,51 @@ router.get('/global', authenticateToken, async (req, res) => {
         await ensureSeasonRatings(seasonId);
 
         const [rows] = await pool.query(
-            `SELECT pr.*, p.display_name, p.profile_photo,
+            `SELECT ${RANKING_PLAYER_SELECT},
                     (SELECT COUNT(*) FROM duos d
                        WHERE d.season_id = pr.season_id
                          AND (d.player1_id = pr.player_id OR d.player2_id = pr.player_id)) AS has_duo
              FROM player_ratings pr
-             JOIN players p ON pr.player_id = p.id
+             ${RANKING_PLAYER_JOINS}
              WHERE pr.season_id = ?`,
             [seasonId]
         );
 
+        // Duo par defaut (1200) pour les joueurs sans duo, afin de garder une base comparable
         const enriched = rows.map((r) => {
-            const duoElo = Number(r.has_duo) > 0 ? r.elo_duo : 1200;
-            const total = r.elo_attack + r.elo_defense + r.elo_1v1 + duoElo;
-            return { row: r, total, duoElo };
+            const hasDuo = Number(r.has_duo) > 0;
+            const duoElo = hasDuo ? r.elo_duo : 1200;
+            return {
+                row: r,
+                hasDuo,
+                duoElo,
+                total: r.elo_attack + r.elo_defense + r.elo_1v1 + duoElo,
+            };
         });
 
-        enriched.sort((a, b) => {
-            if (b.total !== a.total) return b.total - a.total;
-            return (a.row.display_name || '').localeCompare(b.row.display_name || '');
-        });
+        enriched.sort((a, b) =>
+            b.total - a.total || (a.row.display_name || '').localeCompare(b.row.display_name || '')
+        );
 
         const ranked = enriched.map((entry, i) => {
             const r = entry.row;
-            const totalWins = r.wins_attack + r.wins_defense + r.wins_1v1 + r.wins_duo;
-            const totalLosses = r.losses_attack + r.losses_defense + r.losses_1v1 + r.losses_duo;
             return {
                 position: i + 1,
                 player_id: r.player_id,
                 display_name: r.display_name,
                 profile_photo: r.profile_photo,
+                equipped_title_label: r.equipped_title_label,
+                equipped_title_color: r.equipped_title_color,
+                equipped_border_image: r.equipped_border_image,
                 elo: entry.total,
                 rank: getRank(Math.round(entry.total / 4)),
                 elo_attack: r.elo_attack,
                 elo_defense: r.elo_defense,
                 elo_1v1: r.elo_1v1,
                 elo_duo: entry.duoElo,
-                has_duo: Number(r.has_duo) > 0,
-                wins: totalWins,
-                losses: totalLosses,
+                has_duo: entry.hasDuo,
+                wins: r.wins_attack + r.wins_defense + r.wins_1v1 + r.wins_duo,
+                losses: r.losses_attack + r.losses_defense + r.losses_1v1 + r.losses_duo,
             };
         });
 

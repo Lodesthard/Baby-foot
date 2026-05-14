@@ -17,6 +17,25 @@ function getTotalRounds(participantCount) {
     return Math.ceil(Math.log2(participantCount));
 }
 
+// Charge (ou cree) la ligne player_ratings pour la saison donnee.
+async function fetchOrCreateRating(conn, playerId, seasonId) {
+    const [rows] = await conn.query(
+        'SELECT * FROM player_ratings WHERE player_id = ? AND season_id = ?',
+        [playerId, seasonId]
+    );
+    if (rows.length > 0) return rows[0];
+
+    await conn.query(
+        'INSERT INTO player_ratings (player_id, season_id) VALUES (?, ?)',
+        [playerId, seasonId]
+    );
+    const [newRows] = await conn.query(
+        'SELECT * FROM player_ratings WHERE player_id = ? AND season_id = ?',
+        [playerId, seasonId]
+    );
+    return newRows[0];
+}
+
 // ===== Liste des tournois de la saison active =====
 router.get('/', authenticateToken, async (req, res) => {
     try {
@@ -467,24 +486,8 @@ router.post('/:id/matches/:matchId/result', authenticateToken, requireAdmin, asy
 
         if (t.tournament_type === 'simple') {
             // Record as a 1v1 match with ELO
-            const getRating = async (playerId) => {
-                const [rows] = await conn.query(
-                    'SELECT * FROM player_ratings WHERE player_id = ? AND season_id = ?',
-                    [playerId, s.id]
-                );
-                if (rows.length === 0) {
-                    await conn.query('INSERT INTO player_ratings (player_id, season_id) VALUES (?, ?)', [playerId, s.id]);
-                    const [newRows] = await conn.query(
-                        'SELECT * FROM player_ratings WHERE player_id = ? AND season_id = ?',
-                        [playerId, s.id]
-                    );
-                    return newRows[0];
-                }
-                return rows[0];
-            };
-
-            const r1 = await getRating(part1.player_id);
-            const r2 = await getRating(part2.player_id);
+            const r1 = await fetchOrCreateRating(conn, part1.player_id, s.id);
+            const r2 = await fetchOrCreateRating(conn, part2.player_id, s.id);
 
             const eloChanges = calculate1v1EloChange(
                 r1.elo_1v1, r2.elo_1v1,
@@ -548,27 +551,11 @@ router.post('/:id/matches/:matchId/result', authenticateToken, requireAdmin, asy
             const d1 = duo1[0];
             const d2 = duo2[0];
 
-            const getRating = async (playerId) => {
-                const [rows] = await conn.query(
-                    'SELECT * FROM player_ratings WHERE player_id = ? AND season_id = ?',
-                    [playerId, s.id]
-                );
-                if (rows.length === 0) {
-                    await conn.query('INSERT INTO player_ratings (player_id, season_id) VALUES (?, ?)', [playerId, s.id]);
-                    const [newRows] = await conn.query(
-                        'SELECT * FROM player_ratings WHERE player_id = ? AND season_id = ?',
-                        [playerId, s.id]
-                    );
-                    return newRows[0];
-                }
-                return rows[0];
-            };
-
             const ratings = {
-                t1_attack: await getRating(d1.player1_id),
-                t1_defense: await getRating(d1.player2_id),
-                t2_attack: await getRating(d2.player1_id),
-                t2_defense: await getRating(d2.player2_id),
+                t1_attack: await fetchOrCreateRating(conn, d1.player1_id, s.id),
+                t1_defense: await fetchOrCreateRating(conn, d1.player2_id, s.id),
+                t2_attack: await fetchOrCreateRating(conn, d2.player1_id, s.id),
+                t2_defense: await fetchOrCreateRating(conn, d2.player2_id, s.id),
             };
 
             const seasonConfig = {

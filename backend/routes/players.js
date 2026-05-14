@@ -58,7 +58,14 @@ router.get('/:id/stats', authenticateToken, async (req, res) => {
         );
 
         const [player] = await pool.query(
-            'SELECT id, identifier, display_name, profile_photo FROM players WHERE id = ?',
+            `SELECT p.id, p.identifier, p.display_name, p.profile_photo,
+                    p.equipped_title_id, p.equipped_border_id,
+                    t.label AS equipped_title_label, t.color AS equipped_title_color,
+                    b.image_path AS equipped_border_image
+             FROM players p
+             LEFT JOIN skin_titles t ON t.id = p.equipped_title_id
+             LEFT JOIN skin_borders b ON b.id = p.equipped_border_id
+             WHERE p.id = ?`,
             [req.params.id]
         );
 
@@ -83,13 +90,18 @@ router.get('/:id/stats', authenticateToken, async (req, res) => {
             globalRank = pos >= 0 ? pos + 1 : null;
         }
 
+        const [totalRows] = await pool.query(
+            'SELECT COUNT(*) as c FROM player_ratings WHERE season_id = ?',
+            [season[0].id]
+        );
+
         res.json({
             player: player[0] || null,
             ratings: ratings[0] || null,
             duo: duo[0] || null,
             season_id: season[0].id,
             global_rank: globalRank,
-            total_players: (await pool.query('SELECT COUNT(*) as c FROM player_ratings WHERE season_id = ?', [season[0].id]))[0][0].c
+            total_players: totalRows[0].c,
         });
     } catch (err) {
         console.error(err);

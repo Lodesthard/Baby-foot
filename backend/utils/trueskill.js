@@ -47,14 +47,15 @@ function parseNum(value, fallback) {
     return Number.isFinite(n) ? n : fallback;
 }
 
+// Defauts calibres : ~80 pts ELO par match, +/-10 pts par 400 pts d ecart.
 function getTsConfig(seasonConfig) {
     return {
         mu: parseNum(seasonConfig?.ts_mu, 25),
         sigma: parseNum(seasonConfig?.ts_sigma, 25 / 3),
-        beta: parseNum(seasonConfig?.ts_beta, 25 / 6),
+        beta: parseNum(seasonConfig?.ts_beta, 86 / 3),
         tau: parseNum(seasonConfig?.ts_tau, 25 / 300),
-        scale: parseNum(seasonConfig?.ts_scale, 48),
-        scoreMult: parseNum(seasonConfig?.ts_score_multiplier, 0.1),
+        scale: parseNum(seasonConfig?.ts_scale, 61),
+        scoreMult: parseNum(seasonConfig?.ts_score_multiplier, 0),
     };
 }
 
@@ -75,8 +76,10 @@ function updateTeams(winners, losers, cfg, scoreDiff) {
     const muL = losers.reduce((s, p) => s + p.mu, 0);
     const t = (muW - muL) / c;
 
-    // Bonus selon l ecart au score : amplifie la confiance de la mise a jour
-    const scoreBoost = 1 + Math.max(0, scoreDiff || 0) * cfg.scoreMult;
+    // Bonus selon l ecart au score : amplifie la confiance de la mise a jour.
+    // Cap a 3x pour empecher des mises a jour explosives si scoreMult est mal regle.
+    const rawBoost = 1 + Math.max(0, scoreDiff || 0) * cfg.scoreMult;
+    const scoreBoost = Math.min(3, Math.max(1, rawBoost));
 
     const v = vWin(t) * scoreBoost;
     const w = Math.min(1, Math.max(0, wWin(t)));
@@ -99,18 +102,21 @@ function updateTeams(winners, losers, cfg, scoreDiff) {
 function muFromRating(rating, role, cfg) {
     const col = `ts_mu_${role}`;
     const raw = parseFloat(rating?.[col]);
-    return Number.isFinite(raw) && raw > 0 ? raw : cfg.mu;
+    // Mu peut legitimement etre proche de 0 ou negatif apres une longue serie
+    // de defaites : on ne reinitialise que si la valeur n est pas un nombre.
+    return Number.isFinite(raw) ? raw : cfg.mu;
 }
 
 function sigmaFromRating(rating, role, cfg) {
     const col = `ts_sigma_${role}`;
     const raw = parseFloat(rating?.[col]);
-    return Number.isFinite(raw) && raw > 0 ? raw : cfg.sigma;
+    // Sigma doit rester strictement positif. Plancher pour empecher les NaN
+    // si une valeur corrompue (0/negatif) traine en base.
+    return Number.isFinite(raw) && raw > 1e-6 ? raw : cfg.sigma;
 }
 
-function eloFromMu(oldEloValue, oldMu, newMu, cfg) {
-    const delta = Math.round((newMu - oldMu) * cfg.scale);
-    return { delta, newElo: Math.max(0, (oldEloValue || 0) + delta) };
+function eloDelta(oldMu, newMu, cfg) {
+    return Math.round((newMu - oldMu) * cfg.scale);
 }
 
 // 2v2 solo / duo : chaque role (attack/defense) est traite comme un duel
@@ -123,18 +129,8 @@ function calculateMatchTrueskill(match, ratings, seasonConfig) {
     const scoreDiff = Math.abs(score_team1 - score_team2);
 
     const roles = [
-        {
-            key: 'attack',
-            a: 'ts_mu_attack', b: 'ts_sigma_attack',
-            eloField: 'elo_attack',
-            t1: ratings.t1_attack, t2: ratings.t2_attack,
-        },
-        {
-            key: 'defense',
-            a: 'ts_mu_defense', b: 'ts_sigma_defense',
-            eloField: 'elo_defense',
-            t1: ratings.t1_defense, t2: ratings.t2_defense,
-        },
+        { key: 'attack', t1: ratings.t1_attack, t2: ratings.t2_attack },
+        { key: 'defense', t1: ratings.t1_defense, t2: ratings.t2_defense },
     ];
 
     const result = { ts_new: {} };
@@ -148,13 +144,8 @@ function calculateMatchTrueskill(match, ratings, seasonConfig) {
         const losers = team1Wins ? team2 : team1;
         updateTeams(winners, losers, cfg, scoreDiff);
 
-        const oldEloT1 = Number(role.t1[role.eloField]) || 0;
-        const oldEloT2 = Number(role.t2[role.eloField]) || 0;
-        const d1 = eloFromMu(oldEloT1, oldMuT1, team1[0].mu, cfg);
-        const d2 = eloFromMu(oldEloT2, oldMuT2, team2[0].mu, cfg);
-
-        result[`elo_change_t1_${role.key}`] = d1.delta;
-        result[`elo_change_t2_${role.key}`] = d2.delta;
+        result[`elo_change_t1_${role.key}`] = eloDelta(oldMuT1, team1[0].mu, cfg);
+        result[`elo_change_t2_${role.key}`] = eloDelta(oldMuT2, team2[0].mu, cfg);
         result.ts_new[`t1_${role.key}`] = { mu: team1[0].mu, sigma: team1[0].sigma };
         result.ts_new[`t2_${role.key}`] = { mu: team2[0].mu, sigma: team2[0].sigma };
     }
@@ -166,31 +157,22 @@ function calculateDuoTrueskill(ratings, scoreT1, scoreT2, seasonConfig) {
     const team1Wins = scoreT1 > scoreT2;
     const scoreDiff = Math.abs(scoreT1 - scoreT2);
 
-    const t1 = [
-        { mu: muFromRating(ratings.t1_attack, 'duo', cfg), sigma: sigmaFromRating(ratings.t1_attack, 'duo', cfg) },
-        { mu: muFromRating(ratings.t1_defense, 'duo', cfg), sigma: sigmaFromRating(ratings.t1_defense, 'duo', cfg) },
-    ];
-    const t2 = [
-        { mu: muFromRating(ratings.t2_attack, 'duo', cfg), sigma: sigmaFromRating(ratings.t2_attack, 'duo', cfg) },
-        { mu: muFromRating(ratings.t2_defense, 'duo', cfg), sigma: sigmaFromRating(ratings.t2_defense, 'duo', cfg) },
-    ];
-    const oldMu = {
-        t1a: t1[0].mu, t1d: t1[1].mu, t2a: t2[0].mu, t2d: t2[1].mu,
-    };
+    const makePlayer = (rating) => ({
+        mu: muFromRating(rating, 'duo', cfg),
+        sigma: sigmaFromRating(rating, 'duo', cfg),
+    });
+    const t1 = [makePlayer(ratings.t1_attack), makePlayer(ratings.t1_defense)];
+    const t2 = [makePlayer(ratings.t2_attack), makePlayer(ratings.t2_defense)];
+    const oldMu = { t1a: t1[0].mu, t1d: t1[1].mu, t2a: t2[0].mu, t2d: t2[1].mu };
 
     const winners = team1Wins ? t1 : t2;
     const losers = team1Wins ? t2 : t1;
     updateTeams(winners, losers, cfg, scoreDiff);
 
-    const oldEloT1a = Number(ratings.t1_attack.elo_duo) || 0;
-    const oldEloT1d = Number(ratings.t1_defense.elo_duo) || 0;
-    const oldEloT2a = Number(ratings.t2_attack.elo_duo) || 0;
-    const oldEloT2d = Number(ratings.t2_defense.elo_duo) || 0;
-
-    const d1a = eloFromMu(oldEloT1a, oldMu.t1a, t1[0].mu, cfg).delta;
-    const d1d = eloFromMu(oldEloT1d, oldMu.t1d, t1[1].mu, cfg).delta;
-    const d2a = eloFromMu(oldEloT2a, oldMu.t2a, t2[0].mu, cfg).delta;
-    const d2d = eloFromMu(oldEloT2d, oldMu.t2d, t2[1].mu, cfg).delta;
+    const d1a = eloDelta(oldMu.t1a, t1[0].mu, cfg);
+    const d1d = eloDelta(oldMu.t1d, t1[1].mu, cfg);
+    const d2a = eloDelta(oldMu.t2a, t2[0].mu, cfg);
+    const d2d = eloDelta(oldMu.t2d, t2[1].mu, cfg);
 
     return {
         elo_change_duo_t1: Math.round((d1a + d1d) / 2),
@@ -218,12 +200,9 @@ function calculate1v1Trueskill(r1, r2, score1, score2, seasonConfig) {
     const losers = p1Wins ? p2 : p1;
     updateTeams(winners, losers, cfg, scoreDiff);
 
-    const oldElo1 = Number(r1.elo_1v1) || 0;
-    const oldElo2 = Number(r2.elo_1v1) || 0;
-
     return {
-        elo_change_1v1_t1: eloFromMu(oldElo1, oldMu1, p1[0].mu, cfg).delta,
-        elo_change_1v1_t2: eloFromMu(oldElo2, oldMu2, p2[0].mu, cfg).delta,
+        elo_change_1v1_t1: eloDelta(oldMu1, p1[0].mu, cfg),
+        elo_change_1v1_t2: eloDelta(oldMu2, p2[0].mu, cfg),
         ts_new: {
             p1: { mu: p1[0].mu, sigma: p1[0].sigma },
             p2: { mu: p2[0].mu, sigma: p2[0].sigma },
