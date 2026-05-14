@@ -4434,11 +4434,27 @@ body[data-theme="mai"] .recap-slide h2 {
     background-clip: initial !important;
 }
 
-body[data-theme="mai"] .recap-progress { background: rgba(255,255,255,0.18) !important; box-shadow: none !important; }
-body[data-theme="mai"] .recap-progress-bar { background: rgba(255,255,255,0.7) !important; box-shadow: none !important; }
+/* Top progress bars : restore originals (Instagram-Stories style).
+   Le bug venait du fait que le mai override forçait toutes les bars en blanc.0.7,
+   ce qui ecrasait `.completed` (.9) et `.active::after` (#fff). */
+body[data-theme="mai"] .recap-progress {
+    background: none !important;
+    box-shadow: none !important;
+}
+body[data-theme="mai"] .recap-progress-bar {
+    background: rgba(255, 255, 255, 0.2) !important;
+    box-shadow: none !important;
+    border: 0 !important;
+}
+body[data-theme="mai"] .recap-progress-bar.completed {
+    background: rgba(255, 255, 255, 0.9) !important;
+}
+body[data-theme="mai"] .recap-progress-bar.active::after {
+    background: #fff !important;
+    box-shadow: none !important;
+}
 
-/* Suppress mai page enter / card enter animations inside recap */
-body[data-theme="mai"] .recap-slide,
+/* Preserve recap slide-in animation under mai (only kill mai page-enter cascade). */
 body[data-theme="mai"] .recap-podium-item { animation: none !important; }
 
 /* SQL admin */
