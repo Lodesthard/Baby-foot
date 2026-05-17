@@ -13,7 +13,7 @@ function authenticateToken(req, res, next) {
 }
 
 function requireAdmin(req, res, next) {
-    if (!req.user.is_admin) {
+    if (!req.user || !req.user.is_admin) {
         return res.status(403).json({ error: 'Accès administrateur requis' });
     }
     next();

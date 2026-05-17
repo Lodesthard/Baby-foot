@@ -11,4 +11,10 @@ const pool = mysql.createPool({
     queueLimit: 0
 });
 
+// Empeche un crash process si MySQL coupe une connexion idle (wait_timeout,
+// reseau). Sans ce listener, un event 'error' non gere fait throw Node.
+pool.on('error', (err) => {
+    console.error('Erreur pool MySQL (connexion perdue, recuperation auto) :', err.code || err.message || err);
+});
+
 module.exports = pool;
